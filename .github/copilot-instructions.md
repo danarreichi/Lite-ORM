@@ -76,17 +76,45 @@ The application uses MySQL with the following tables:
 
 ### Core Tables
 - **users**: User accounts with profile information
+- **categories**: Product categories
+- **products**: Product catalog with pricing and inventory
 - **payment_methods**: User's saved payment methods (credit cards, PayPal, etc.)
 - **transactions**: Main transaction records with totals and status
 - **transaction_details**: Individual items within transactions
 - **payment_histories**: Payment processing history and gateway responses
+- **reviews**: Product reviews by users (2 foreign keys: user_id, product_id)
+- **user_product_favorites**: User's favorite products (COMPOSITE PRIMARY KEY: user_id, product_id)
+- **stores**: Store locations
+- **orders**: Customer orders (sharded by store_id)
+- **order_items**: Items in orders (MULTIPLE FOREIGN KEYS: order_id, store_id)
 
 ### Relationships
 - `users` → `payment_methods` (1:many)
-- `users` → `transactions` (1:many)  
+- `users` → `transactions` (1:many)
+- `users` → `reviews` (1:many)
+- `users` → `orders` (1:many)
+- `users` ↔ `products` → `user_product_favorites` (many:many with composite key)
 - `payment_methods` → `transactions` (1:many)
 - `transactions` → `transaction_details` (1:many)
 - `transactions` → `payment_histories` (1:many)
+- `products` → `transaction_details` (1:many)
+- `products` → `reviews` (1:many)
+- `categories` → `products` (1:many)
+- `stores` → `orders` (1:many)
+- `orders` → `order_items` (1:many with MULTIPLE column matching: order_id + store_id)
+
+### Composite Key Example
+The `user_product_favorites` table demonstrates composite primary keys:
+- Primary Key: `(user_id, product_id)` - no separate id column
+- Represents many-to-many relationship between users and products
+- Used to track which products each user has favorited
+
+### Multiple Foreign Keys Example
+The `order_items` table demonstrates multiple foreign key matching:
+- Matches on BOTH `order_id` AND `store_id` to parent `orders` table
+- Use case: Database sharding where data is partitioned by store_id
+- Query syntax: `.withMany('order_items', ['order_id', 'store_id'], ['id', 'store_id'])`
+- Common in multi-tenant systems or sharded databases
 
 ### Sample Data
 Run `npm run seed` to populate the database with sample users, transactions, and payment data.
@@ -370,6 +398,22 @@ const userStats = await query('users')
   .get();
 // userStats[0] = { id: 1, name: 'John', total_transactions: 10, total_spent: 15000, avg_rating: 4.5 }
 
+// Aggregates with Composite Keys (Multiple Foreign Keys)
+const ordersWithAggregates = await query('orders')
+  .withCount(
+    {'order_items': 'total_items'},
+    ['order_id', 'store_id'],    // Multiple foreign keys
+    ['id', 'store_id']            // Multiple local keys
+  )
+  .withSum(
+    {'order_items': 'total_value'},
+    ['order_id', 'store_id'],
+    ['id', 'store_id'],
+    'total_price'
+  )
+  .get();
+// ordersWithAggregates[0] = { id: 1, order_number: 'ORD-001', total_items: 3, total_value: 299.99 }
+
 // Filter by Aggregate Values - where() auto-detects aggregate aliases
 // Just use normal where() - it automatically generates subquery if column matches aggregate alias!
 const highSpenders = await query('users')
@@ -454,6 +498,38 @@ const activeOrNoBans = await query('users')
   .get();
 // WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
 
+// Composite Keys - Support for tables with composite primary keys
+// user_product_favorites has composite PK (user_id, product_id) - no id column!
+const usersWithFavorites = await query('users')
+  .withMany('user_product_favorites', 'user_id', 'id')
+  .get();
+// users[0].user_product_favorites = [{user_id: 1, product_id: 2, ...}, ...]
+
+// Composite keys with multiple columns (arrays)
+// For tables where relationships require matching on multiple columns
+const ordersWithItems = await query('orders')
+  .withMany(
+    'order_items',
+    ['order_id', 'store_id'],    // Multiple foreign keys
+    ['id', 'store_id']            // Multiple local keys
+  )
+  .get();
+
+// Real example: Orders with Items (store-sharded database)
+const example = await query('orders')
+  .withMany(
+    'order_items',
+    ['order_id', 'store_id'],    // order_items must match BOTH columns
+    ['id', 'store_id'],           // from orders table
+    function(q) {
+      q.withOne('products', 'id', 'product_id'); // Nested relation
+    }
+  )
+  .withOne('users', 'id', 'user_id')
+  .where('status', 'delivered')
+  .get();
+// orders[0].order_items = [{order_id: 1, store_id: 1, ...}, ...]
+
 // Chunking large datasets (process in batches to avoid memory issues)
 await query('users')
   .where('status', 'active')
@@ -496,20 +572,20 @@ Available methods:
 - `orWhereNotExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE NOT EXISTS subquery
 - `group(callback)` - Start a grouped condition (AND logic) with callback
 - `orGroup(callback)` - Start a grouped condition (OR logic) with callback
-- `withMany('table', foreignKey, localKey, callback)` - Eager load has-many (shorthand: table = property name)
-- `withMany({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-many (custom property name)
-- `withOne('table', foreignKey, localKey, callback)` - Eager load has-one (shorthand: table = property name)
-- `withOne({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-one (custom property name)
-- `withSum('table', foreignKey, localKey, column, callback)` - Add SUM aggregate (auto alias: table_column_sum)
-- `withSum({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add SUM aggregate (custom alias)
-- `withCount('table', foreignKey, localKey, callback)` - Add COUNT aggregate (auto alias: table_count)
-- `withCount({'table': 'alias'}, foreignKey, localKey, callback)` - Add COUNT aggregate (custom alias)
-- `withAvg('table', foreignKey, localKey, column, callback)` - Add AVG aggregate (auto alias: table_column_avg)
-- `withAvg({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add AVG aggregate (custom alias)
-- `withMax('table', foreignKey, localKey, column, callback)` - Add MAX aggregate (auto alias: table_column_max)
-- `withMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MAX aggregate (custom alias)
-- `withMin('table', foreignKey, localKey, column, callback)` - Add MIN aggregate (auto alias: table_column_min)
-- `withMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MIN aggregate (custom alias)
+- `withMany('table', foreignKey, localKey, callback)` - Eager load has-many (shorthand: table = property name, supports arrays for composite keys)
+- `withMany({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-many (custom property name, supports arrays for composite keys)
+- `withOne('table', foreignKey, localKey, callback)` - Eager load has-one (shorthand: table = property name, supports arrays for composite keys)
+- `withOne({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-one (custom property name, supports arrays for composite keys)
+- `withSum('table', foreignKey, localKey, column, callback)` - Add SUM aggregate (auto alias: table_column_sum, supports arrays for composite keys)
+- `withSum({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add SUM aggregate (custom alias, supports arrays for composite keys)
+- `withCount('table', foreignKey, localKey, callback)` - Add COUNT aggregate (auto alias: table_count, supports arrays for composite keys)
+- `withCount({'table': 'alias'}, foreignKey, localKey, callback)` - Add COUNT aggregate (custom alias, supports arrays for composite keys)
+- `withAvg('table', foreignKey, localKey, column, callback)` - Add AVG aggregate (auto alias: table_column_avg, supports arrays for composite keys)
+- `withAvg({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add AVG aggregate (custom alias, supports arrays for composite keys)
+- `withMax('table', foreignKey, localKey, column, callback)` - Add MAX aggregate (auto alias: table_column_max, supports arrays for composite keys)
+- `withMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MAX aggregate (custom alias, supports arrays for composite keys)
+- `withMin('table', foreignKey, localKey, column, callback)` - Add MIN aggregate (auto alias: table_column_min, supports arrays for composite keys)
+- `withMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MIN aggregate (custom alias, supports arrays for composite keys)
 - `like(column, value, side)` - LIKE condition (side: 'both', 'before', 'after')
 - `orLike(column, value, side)` - OR LIKE condition
 - `search(columns, value, side)` - Search multiple columns with AND logic (side: 'both', 'before', 'after')

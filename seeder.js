@@ -59,6 +59,10 @@ async function createTables(connection) {
   try {
     // Drop existing tables if they exist (to ensure fresh schema)
     await connection.execute('SET FOREIGN_KEY_CHECKS=0');
+    await connection.execute('DROP TABLE IF EXISTS order_items');
+    await connection.execute('DROP TABLE IF EXISTS orders');
+    await connection.execute('DROP TABLE IF EXISTS stores');
+    await connection.execute('DROP TABLE IF EXISTS user_product_favorites');
     await connection.execute('DROP TABLE IF EXISTS reviews');
     await connection.execute('DROP TABLE IF EXISTS transaction_details');
     await connection.execute('DROP TABLE IF EXISTS payment_histories');
@@ -207,6 +211,74 @@ async function createTables(connection) {
     `);
     console.log('✅ Reviews table created (2 Foreign Keys example)');
 
+    // COMPOSITE KEY EXAMPLE: User Product Favorites
+    // Uses composite primary key (user_id, product_id) - no separate id column!
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS user_product_favorites (
+        user_id INT NOT NULL,
+        product_id INT NOT NULL,
+        favorited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        notes TEXT,
+        PRIMARY KEY (user_id, product_id),
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ User Product Favorites table created (COMPOSITE PRIMARY KEY example)');
+
+    // MULTIPLE FOREIGN KEYS EXAMPLE: Store-sharded Orders
+    // Demonstrates relationships that match on MULTIPLE columns
+    
+    // Stores table
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS stores (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        location VARCHAR(200),
+        region VARCHAR(50),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Stores table created');
+
+    // Orders table (sharded by store_id)
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS orders (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        store_id INT NOT NULL,
+        user_id INT NOT NULL,
+        order_number VARCHAR(50) UNIQUE NOT NULL,
+        total_amount DECIMAL(10,2) NOT NULL,
+        status ENUM('pending', 'processing', 'shipped', 'delivered', 'cancelled') DEFAULT 'pending',
+        order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        INDEX idx_store_order (store_id, id)
+      )
+    `);
+    console.log('✅ Orders table created (with store_id for sharding)');
+
+    // Order items table - MUST match BOTH order_id AND store_id
+    // This demonstrates MULTIPLE FOREIGN KEY matching!
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS order_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        order_id INT NOT NULL,
+        store_id INT NOT NULL,
+        product_id INT NOT NULL,
+        item_name VARCHAR(100) NOT NULL,
+        quantity INT NOT NULL DEFAULT 1,
+        unit_price DECIMAL(10,2) NOT NULL,
+        total_price DECIMAL(10,2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+        FOREIGN KEY (store_id) REFERENCES stores(id) ON DELETE RESTRICT,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT,
+        INDEX idx_order_store (order_id, store_id)
+      )
+    `);
+    console.log('✅ Order Items table created (MULTIPLE FOREIGN KEY example - matches order_id AND store_id)');
+
 
   } catch (error) {
     console.error('❌ Error creating tables:', error);
@@ -304,6 +376,67 @@ async function seedData(connection) {
     `);
     console.log('✅ Reviews seeded (2 Foreign Keys example)');
 
+    // Seed User Product Favorites (COMPOSITE KEY table)
+    // Notice: No id column! Primary key is the combination of (user_id, product_id)
+    await connection.execute(`
+      INSERT INTO user_product_favorites (user_id, product_id, notes) VALUES
+      (1, 1, 'Want to buy another one as a gift'),
+      (1, 2, 'Great book, recommend to friends'),
+      (1, 4, 'Need more of these cables'),
+      (2, 1, 'Saving for purchase'),
+      (2, 5, 'Perfect for home office'),
+      (3, 2, 'On my reading list'),
+      (3, 3, 'Need this for new phone'),
+      (3, 4, NULL)
+    `);
+    console.log('✅ User Product Favorites seeded (COMPOSITE KEY example)');
+
+    // Seed Stores
+    await connection.execute(`
+      INSERT INTO stores (name, location, region) VALUES
+      ('Downtown Store', '123 Main St, Downtown', 'North'),
+      ('Westside Mall', '456 West Ave, Westside', 'West'),
+      ('Eastside Plaza', '789 East Blvd, Eastside', 'East')
+    `);
+    console.log('✅ Stores seeded');
+
+    // Seed Orders (sharded by store_id)
+    await connection.execute(`
+      INSERT INTO orders (store_id, user_id, order_number, total_amount, status) VALUES
+      (1, 1, 'ORD-2024-001', 149.99, 'delivered'),
+      (1, 2, 'ORD-2024-002', 89.99, 'shipped'),
+      (2, 1, 'ORD-2024-003', 234.50, 'processing'),
+      (2, 3, 'ORD-2024-004', 45.00, 'pending'),
+      (3, 2, 'ORD-2024-005', 299.99, 'delivered'),
+      (3, 3, 'ORD-2024-006', 124.99, 'shipped')
+    `);
+    console.log('✅ Orders seeded (with store_id sharding)');
+
+    // Seed Order Items - MUST match both order_id AND store_id
+    // This demonstrates the MULTIPLE FOREIGN KEY relationship!
+    await connection.execute(`
+      INSERT INTO order_items (order_id, store_id, product_id, item_name, quantity, unit_price, total_price) VALUES
+      -- Order 1 (store_id: 1)
+      (1, 1, 1, 'Wireless Headphones', 1, 99.99, 99.99),
+      (1, 1, 3, 'Phone Case', 2, 25.00, 50.00),
+      -- Order 2 (store_id: 1)
+      (2, 1, 4, 'USB-C Cable', 3, 12.99, 38.97),
+      (2, 1, 5, 'Desk Lamp', 1, 34.99, 34.99),
+      -- Order 3 (store_id: 2)
+      (3, 2, 1, 'Wireless Headphones', 2, 99.99, 199.98),
+      (3, 2, 2, 'Programming Book', 1, 45.00, 45.00),
+      -- Order 4 (store_id: 2)
+      (4, 2, 3, 'Phone Case', 1, 25.00, 25.00),
+      -- Order 5 (store_id: 3)
+      (5, 3, 1, 'Wireless Headphones', 1, 99.99, 99.99),
+      (5, 3, 5, 'Desk Lamp', 2, 34.99, 69.98),
+      (5, 3, 4, 'USB-C Cable', 5, 12.99, 64.95),
+      -- Order 6 (store_id: 3)
+      (6, 3, 2, 'Programming Book', 1, 45.00, 45.00),
+      (6, 3, 3, 'Phone Case', 3, 25.00, 75.00)
+    `);
+    console.log('✅ Order Items seeded (MULTIPLE FOREIGN KEY - matches order_id AND store_id)');
+
   } catch (error) {
     console.error('❌ Error seeding data:', error);
     throw error;
@@ -338,6 +471,15 @@ async function runSeeder() {
     console.log('- 3 categories created');
     console.log('- 5 products created');
     console.log('- 6 reviews created (user_id + product_id)');
+    console.log('\n🔑 COMPOSITE PRIMARY KEY Example:');
+    console.log('- 8 user_product_favorites created');
+    console.log('- Primary Key: (user_id, product_id) - no id column!');
+    console.log('\n🔗 MULTIPLE FOREIGN KEYS Example:');
+    console.log('- 3 stores created');
+    console.log('- 6 orders created (sharded by store_id)');
+    console.log('- 12 order_items created');
+    console.log('- Relationship: order_items matches BOTH order_id AND store_id!');
+    console.log('- Use case: Database sharding, multi-tenant systems');
 
   } catch (error) {
     console.error('💥 Seeder failed:', error);

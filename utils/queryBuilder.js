@@ -133,7 +133,19 @@ class QueryBuilder {
       // Auto-generate aggregate subquery
       const subQuery = new QueryBuilder();
       subQuery.from(aggregate.relatedTable);
-      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      
+      // Handle composite keys (arrays) or single key
+      if (Array.isArray(aggregate.foreignKey)) {
+        const foreignKeys = aggregate.foreignKey;
+        const localKeys = Array.isArray(aggregate.localKey) ? aggregate.localKey : [aggregate.localKey];
+        
+        // Add multiple WHERE conditions for composite keys
+        foreignKeys.forEach((fk, i) => {
+          subQuery.where(`${aggregate.relatedTable}.${fk}`, new RawSql(`${this.query.table}.${localKeys[i]}`));
+        });
+      } else {
+        subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      }
       
       // Apply callback if provided in aggregate definition
       if (aggregate.callback && typeof aggregate.callback === 'function') {
@@ -190,7 +202,19 @@ class QueryBuilder {
       // Auto-generate aggregate subquery
       const subQuery = new QueryBuilder();
       subQuery.from(aggregate.relatedTable);
-      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      
+      // Handle composite keys (arrays) or single key
+      if (Array.isArray(aggregate.foreignKey)) {
+        const foreignKeys = aggregate.foreignKey;
+        const localKeys = Array.isArray(aggregate.localKey) ? aggregate.localKey : [aggregate.localKey];
+        
+        // Add multiple WHERE conditions for composite keys
+        foreignKeys.forEach((fk, i) => {
+          subQuery.where(`${aggregate.relatedTable}.${fk}`, new RawSql(`${this.query.table}.${localKeys[i]}`));
+        });
+      } else {
+        subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      }
       
       // Apply callback if provided in aggregate definition
       if (aggregate.callback && typeof aggregate.callback === 'function') {
@@ -395,8 +419,8 @@ class QueryBuilder {
    * Uses two-query approach to load related records efficiently
    * 
    * @param {string|object} relation - Table name (string) or object mapping {relatedTable: relationName}
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} [localKey='id'] - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} [localKey='id'] - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the related query
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
@@ -415,6 +439,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].completedTransactions = [{...}, {...}]
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withMany('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+   *   .get();
+   * // orders[0].order_items = [{...}, {...}]
    */
   withMany(relation, foreignKey, localKey = 'id', callback = null) {
     let relatedTable, relationName;
@@ -446,8 +477,8 @@ class QueryBuilder {
    * Uses two-query approach to load single related record efficiently
    * 
    * @param {string|object} relation - Table name (string) or object mapping {relatedTable: relationName}
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} [localKey='id'] - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} [localKey='id'] - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the related query
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
@@ -464,6 +495,13 @@ class QueryBuilder {
    *   .withOne({'users': 'buyer'}, 'id', 'user_id')
    *   .get();
    * // transactions[0].buyer = {...}
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const transactions = await query('transactions')
+   *   .withOne('transaction_details', ['transaction_id', 'item_id'], ['id', 'primary_item_id'])
+   *   .get();
+   * // transactions[0].transaction_details = {...}
    */
   withOne(relation, foreignKey, localKey = 'id', callback = null) {
     let relatedTable, relationName;
@@ -493,8 +531,8 @@ class QueryBuilder {
   /**
    * Add SUM aggregate for related table
    * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {string} column - Column to sum
    * @param {function} [callback] - Optional callback to filter related records
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -514,6 +552,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].total_spent = 15000
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withSum('order_items', ['order_id', 'store_id'], ['id', 'store_id'], 'total_price')
+   *   .get();
+   * // orders[0].order_items_total_price_sum = 299.99
    */
   withSum(relatedTable, foreignKey, localKey, column, callback = null) {
     let table, columnAlias;
@@ -543,8 +588,8 @@ class QueryBuilder {
   /**
    * Add COUNT aggregate for related table
    * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {function} [callback] - Optional callback to filter related records
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
@@ -563,6 +608,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].total_transactions = 5
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withCount('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+   *   .get();
+   * // orders[0].order_items_count = 3
    */
   withCount(relatedTable, foreignKey, localKey, callback = null) {
     let table, columnAlias;
@@ -592,8 +644,8 @@ class QueryBuilder {
   /**
    * Add AVG aggregate for related table
    * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {string} column - Column to average
    * @param {function} [callback] - Optional callback to filter related records
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -613,6 +665,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].avg_amount = 3000
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withAvg('order_items', ['order_id', 'store_id'], ['id', 'store_id'], 'unit_price')
+   *   .get();
+   * // orders[0].order_items_unit_price_avg = 49.99
    */
   withAvg(relatedTable, foreignKey, localKey, column, callback = null) {
     let table, columnAlias;
@@ -642,8 +701,8 @@ class QueryBuilder {
   /**
    * Add MAX aggregate for related table
    * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {string} column - Column to get maximum value
    * @param {function} [callback] - Optional callback to filter related records
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -663,6 +722,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].largest_transaction = 10000
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withMax('order_items', ['order_id', 'store_id'], ['id', 'store_id'], 'total_price')
+   *   .get();
+   * // orders[0].order_items_total_price_max = 199.99
    */
   withMax(relatedTable, foreignKey, localKey, column, callback = null) {
     let table, columnAlias;
@@ -692,8 +758,8 @@ class QueryBuilder {
   /**
    * Add MIN aggregate for related table
    * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {string} column - Column to get minimum value
    * @param {function} [callback] - Optional callback to filter related records
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -713,6 +779,13 @@ class QueryBuilder {
    *   })
    *   .get();
    * // users[0].smallest_transaction = 100
+   * 
+   * @example
+   * // Composite keys (multiple columns)
+   * const orders = await query('orders')
+   *   .withMin('order_items', ['order_id', 'store_id'], ['id', 'store_id'], 'unit_price')
+   *   .get();
+   * // orders[0].order_items_unit_price_min = 12.99
    */
   withMin(relatedTable, foreignKey, localKey, column, callback = null) {
     let table, columnAlias;
@@ -988,7 +1061,15 @@ class QueryBuilder {
     let conditionsInGroup = [0]; // Track conditions per group level
 
     this.query.where.forEach((condition, index) => {
-      if (condition.type === 'GROUP_START') {
+      if (condition.type === 'RAW') {
+        // Handle raw SQL conditions (for composite keys)
+        if (conditionsInGroup[groupLevel] > 0) {
+          sql += ' AND ';
+        }
+        conditionsInGroup[groupLevel]++;
+        sql += condition.sql;
+        this.parameters.push(...condition.values);
+      } else if (condition.type === 'GROUP_START') {
         // Add AND/OR before group if not the first condition at root level
         if (groupLevel === 0 && index > 0) {
           sql += ` ${this.query.where[index - 1].groupType || 'AND'} `;
@@ -1098,7 +1179,19 @@ class QueryBuilder {
             // Build subquery for aggregate
             const subQuery = new QueryBuilder();
             subQuery.from(agg.relatedTable);
-            subQuery.where(`${agg.relatedTable}.${agg.foreignKey}`, new RawSql(`${this.query.table}.${agg.localKey}`));
+            
+            // Handle composite keys (arrays) or single key
+            if (Array.isArray(agg.foreignKey)) {
+              const foreignKeys = agg.foreignKey;
+              const localKeys = Array.isArray(agg.localKey) ? agg.localKey : [agg.localKey];
+              
+              // Add multiple WHERE conditions for composite keys
+              foreignKeys.forEach((fk, i) => {
+                subQuery.where(`${agg.relatedTable}.${fk}`, new RawSql(`${this.query.table}.${localKeys[i]}`));
+              });
+            } else {
+              subQuery.where(`${agg.relatedTable}.${agg.foreignKey}`, new RawSql(`${this.query.table}.${agg.localKey}`));
+            }
             
             // Apply callback if provided
             if (agg.callback && typeof agg.callback === 'function') {
@@ -1433,70 +1526,160 @@ class QueryBuilder {
    */
   async _loadRelations(rows, relations) {
     for (const relation of relations) {
-      // Get the local key values from parent records
-      const localKeyValues = rows.map(row => row[relation.localKey]).filter(val => val != null);
+      // Check if we're dealing with composite keys (arrays)
+      const isCompositeKey = Array.isArray(relation.foreignKey);
       
-      if (localKeyValues.length === 0) {
-        // No valid keys, set empty value based on relation type
-        rows.forEach(row => {
-          row[relation.relationName] = relation.type === 'hasOne' ? null : [];
-        });
-        continue;
-      }
-      
-      // Build query for related records
-      const relatedQuery = new QueryBuilder();
-      relatedQuery.from(relation.relatedTable);
-      relatedQuery.whereIn(relation.foreignKey, localKeyValues);
-      
-      // Apply callback conditions and capture nested withMany/withOne calls
-      if (relation.callback && typeof relation.callback === 'function') {
-        relation.callback(relatedQuery);
-      }
-      
-      // Fetch related records
-      const relatedSql = relatedQuery.buildSql();
-      const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
-      let relatedRecords = relatedResult.rows;
-      
-      // Process nested relations if any were defined in the callback
-      if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
-        relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
-      }
-      
-      if (relation.type === 'hasOne') {
-        // For hasOne: create map of foreignKey -> single record (first match)
-        const mappedRelated = {};
-        relatedRecords.forEach(record => {
-          const fk = record[relation.foreignKey];
-          if (!mappedRelated[fk]) {
-            mappedRelated[fk] = record; // Only take first match
-          }
+      if (isCompositeKey) {
+        // Composite key handling
+        const foreignKeys = relation.foreignKey;
+        const localKeys = Array.isArray(relation.localKey) ? relation.localKey : [relation.localKey];
+        
+        if (foreignKeys.length !== localKeys.length) {
+          throw new Error(`Foreign keys and local keys must have the same length for composite keys`);
+        }
+        
+        // Get unique combinations of local key values from parent records
+        const localKeyValuePairs = rows.map(row => {
+          return localKeys.map(key => row[key]);
+        }).filter(pair => pair.every(val => val != null));
+        
+        if (localKeyValuePairs.length === 0) {
+          // No valid keys, set empty value based on relation type
+          rows.forEach(row => {
+            row[relation.relationName] = relation.type === 'hasOne' ? null : [];
+          });
+          continue;
+        }
+        
+        // Build query for related records with composite key matching
+        const relatedQuery = new QueryBuilder();
+        relatedQuery.from(relation.relatedTable);
+        
+        // Build WHERE clause for composite keys using tuple matching
+        // WHERE (fk1, fk2) IN ((?, ?), (?, ?))
+        const tupleConditions = localKeyValuePairs.map((_, index) => {
+          const conditions = foreignKeys.map((fk, i) => `${fk} = ?`).join(' AND ');
+          return `(${conditions})`;
+        }).join(' OR ');
+        
+        relatedQuery.query.where.push({
+          type: 'RAW',
+          sql: tupleConditions,
+          values: localKeyValuePairs.flat()
         });
         
-        // Attach single related record to parent records
-        rows = rows.map(row => {
-          const localKeyValue = row[relation.localKey];
-          row[relation.relationName] = mappedRelated[localKeyValue] || null;
-          return row;
-        });
+        // Apply callback conditions and capture nested withMany/withOne calls
+        if (relation.callback && typeof relation.callback === 'function') {
+          relation.callback(relatedQuery);
+        }
+        
+        // Fetch related records
+        const relatedSql = relatedQuery.buildSql();
+        const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
+        let relatedRecords = relatedResult.rows;
+        
+        // Process nested relations if any were defined in the callback
+        if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
+        }
+        
+        // Group related records by composite key
+        if (relation.type === 'hasOne') {
+          const mappedRelated = {};
+          relatedRecords.forEach(record => {
+            const compositeKey = foreignKeys.map(fk => record[fk]).join('|');
+            if (!mappedRelated[compositeKey]) {
+              mappedRelated[compositeKey] = record;
+            }
+          });
+          
+          rows = rows.map(row => {
+            const compositeKey = localKeys.map(lk => row[lk]).join('|');
+            row[relation.relationName] = mappedRelated[compositeKey] || null;
+            return row;
+          });
+        } else {
+          const groupedRelated = {};
+          relatedRecords.forEach(record => {
+            const compositeKey = foreignKeys.map(fk => record[fk]).join('|');
+            if (!groupedRelated[compositeKey]) {
+              groupedRelated[compositeKey] = [];
+            }
+            groupedRelated[compositeKey].push(record);
+          });
+          
+          rows = rows.map(row => {
+            const compositeKey = localKeys.map(lk => row[lk]).join('|');
+            row[relation.relationName] = groupedRelated[compositeKey] || [];
+            return row;
+          });
+        }
       } else {
-        // For hasMany: group related records by foreign key
-        const groupedRelated = {};
-        relatedRecords.forEach(record => {
-          const fk = record[relation.foreignKey];
-          if (!groupedRelated[fk]) {
-            groupedRelated[fk] = [];
-          }
-          groupedRelated[fk].push(record);
-        });
+        // Single key handling (original logic)
+        const localKeyValues = rows.map(row => row[relation.localKey]).filter(val => val != null);
         
-        // Attach related records array to parent records
-        rows = rows.map(row => {
-          const localKeyValue = row[relation.localKey];
-          row[relation.relationName] = groupedRelated[localKeyValue] || [];
-          return row;
-        });
+        if (localKeyValues.length === 0) {
+          // No valid keys, set empty value based on relation type
+          rows.forEach(row => {
+            row[relation.relationName] = relation.type === 'hasOne' ? null : [];
+          });
+          continue;
+        }
+        
+        // Build query for related records
+        const relatedQuery = new QueryBuilder();
+        relatedQuery.from(relation.relatedTable);
+        relatedQuery.whereIn(relation.foreignKey, localKeyValues);
+        
+        // Apply callback conditions and capture nested withMany/withOne calls
+        if (relation.callback && typeof relation.callback === 'function') {
+          relation.callback(relatedQuery);
+        }
+        
+        // Fetch related records
+        const relatedSql = relatedQuery.buildSql();
+        const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
+        let relatedRecords = relatedResult.rows;
+        
+        // Process nested relations if any were defined in the callback
+        if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
+        }
+        
+        if (relation.type === 'hasOne') {
+          // For hasOne: create map of foreignKey -> single record (first match)
+          const mappedRelated = {};
+          relatedRecords.forEach(record => {
+            const fk = record[relation.foreignKey];
+            if (!mappedRelated[fk]) {
+              mappedRelated[fk] = record; // Only take first match
+            }
+          });
+          
+          // Attach single related record to parent records
+          rows = rows.map(row => {
+            const localKeyValue = row[relation.localKey];
+            row[relation.relationName] = mappedRelated[localKeyValue] || null;
+            return row;
+          });
+        } else {
+          // For hasMany: group related records by foreign key
+          const groupedRelated = {};
+          relatedRecords.forEach(record => {
+            const fk = record[relation.foreignKey];
+            if (!groupedRelated[fk]) {
+              groupedRelated[fk] = [];
+            }
+            groupedRelated[fk].push(record);
+          });
+          
+          // Attach related records array to parent records
+          rows = rows.map(row => {
+            const localKeyValue = row[relation.localKey];
+            row[relation.relationName] = groupedRelated[localKeyValue] || [];
+            return row;
+          });
+        }
       }
     }
     
