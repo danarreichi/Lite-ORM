@@ -741,6 +741,10 @@ class QueryBuilder {
       const foreignKeys = aggregate.foreignKey;
       const localKeys = Array.isArray(aggregate.localKey) ? aggregate.localKey : [aggregate.localKey];
 
+      if (foreignKeys.length !== localKeys.length) {
+        throw new Error('Foreign keys and local keys must have the same length for composite keys');
+      }
+
       // Add multiple WHERE conditions for composite keys
       foreignKeys.forEach((fk, i) => {
         subQuery.where(`${aggregate.relatedTable}.${fk}`, new RawSql(`${this.#query.table}.${localKeys[i]}`));
@@ -1441,6 +1445,7 @@ class QueryBuilder {
    * @returns {string} Complete SQL query
    */
   buildSql() {
+    this.#parameters = [];
     // Validate table is set
     if (!this.#query.table) {
       throw new Error('Table name is required. Use from() or query(tableName)');
@@ -1501,6 +1506,10 @@ class QueryBuilder {
               const foreignKeys = agg.foreignKey;
               const localKeys = Array.isArray(agg.localKey) ? agg.localKey : [agg.localKey];
 
+              if (foreignKeys.length !== localKeys.length) {
+                throw new Error('Foreign keys and local keys must have the same length for composite keys');
+              }
+
               // Add multiple WHERE conditions for composite keys
               foreignKeys.forEach((fk, i) => {
                 subQuery.where(`${agg.relatedTable}.${fk}`, new RawSql(`${this.#query.table}.${localKeys[i]}`));
@@ -1555,9 +1564,9 @@ class QueryBuilder {
         }
 
         // LIMIT and OFFSET
-        if (this.#query.limit) {
+        if (this.#query.limit !== null) {
           sql += ` LIMIT ${this.#query.limit}`;
-          if (this.#query.offset) {
+          if (this.#query.offset !== null) {
             sql += ` OFFSET ${this.#query.offset}`;
           }
         }
