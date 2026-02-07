@@ -79,6 +79,21 @@ function assertContains(array, value, testName) {
   return passed;
 }
 
+function assertThrows(fn, testName) {
+  totalTests++;
+  try {
+    fn();
+    failedTests++;
+    console.error(`❌ ${testName}`);
+    console.error('  Expected function to throw');
+    return false;
+  } catch (error) {
+    passedTests++;
+    console.log(`✅ ${testName}`);
+    return true;
+  }
+}
+
 // Test Categories
 console.log('\n📦 BASIC SELECT QUERIES\n');
 
@@ -147,6 +162,44 @@ async function testOrWhere() {
     .orWhere('username', 'jane_smith')
     .get();
   assertEquals(users.length, 2, 'OR WHERE: Returns both users');
+}
+
+async function testInvalidColumnIdentifiers() {
+  assertThrows(() => {
+    query('users').where('username; DROP TABLE users', 'john_doe');
+  }, 'Column validation: Rejects invalid WHERE column');
+
+  assertThrows(() => {
+    query('users').orWhere('username; DROP TABLE users', 'jane_smith');
+  }, 'Column validation: Rejects invalid OR WHERE column');
+
+  assertThrows(() => {
+    query('users').whereIn('username; DROP TABLE users', ['john_doe']);
+  }, 'Column validation: Rejects invalid WHERE IN column');
+
+  assertThrows(() => {
+    query('users').whereNotIn('username; DROP TABLE users', ['john_doe']);
+  }, 'Column validation: Rejects invalid WHERE NOT IN column');
+
+  assertThrows(() => {
+    query('users').like('username; DROP TABLE users', 'john');
+  }, 'Column validation: Rejects invalid LIKE column');
+
+  assertThrows(() => {
+    query('users').orLike('username; DROP TABLE users', 'john');
+  }, 'Column validation: Rejects invalid OR LIKE column');
+
+  assertThrows(() => {
+    query('users').search(['username', 'email; DROP TABLE users'], 'john');
+  }, 'Column validation: Rejects invalid SEARCH column');
+
+  assertThrows(() => {
+    query('users').orSearch(['username', 'email; DROP TABLE users'], 'john');
+  }, 'Column validation: Rejects invalid OR SEARCH column');
+
+  assertThrows(() => {
+    query('transactions').groupBy('status').having('count; DROP TABLE users', '>', 1);
+  }, 'Column validation: Rejects invalid HAVING column');
 }
 
 console.log('\n📁 GROUPED CONDITIONS\n');
@@ -656,6 +709,7 @@ async function runAllTests() {
     await testWhereIn();
     await testWhereNotIn();
     await testOrWhere();
+    await testInvalidColumnIdentifiers();
     
     // Grouped conditions
     await testGroupedConditions();

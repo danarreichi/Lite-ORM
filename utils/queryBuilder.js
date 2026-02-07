@@ -129,6 +129,23 @@ class QueryBuilder {
   }
 
   /**
+   * Validate column identifiers to prevent SQL injection via identifiers
+   * @private
+   * @param {string} column - Column name to validate
+   * @param {string} context - Context for error messages
+   */
+  #validateColumnName(column, context) {
+    if (typeof column !== 'string' || column.trim().length === 0) {
+      throw new Error(`${context} column name must be a non-empty string`);
+    }
+
+    // Allow only simple identifiers: table.column, backticks, underscores
+    if (!/^[a-zA-Z0-9_.`]+$/.test(column)) {
+      throw new Error(`Invalid ${context} column name`);
+    }
+  }
+
+  /**
    * Add WHERE condition with AND logic
    * @param {string} column - Column name
    * @param {string|any} operator - Operator or value (if value is null, operator becomes value)
@@ -147,9 +164,7 @@ class QueryBuilder {
    *   .get();
    */
   where(column, operator = null, value = null) {
-    if (typeof column !== 'string') {
-      throw new TypeError('Column name must be a string');
-    }
+    this.#validateColumnName(column, 'WHERE');
 
     if (value === null && operator !== null) {
       // where('column', 'value')
@@ -195,9 +210,7 @@ class QueryBuilder {
    *   .get();
    */
   orWhere(column, operator = null, value = null) {
-    if (typeof column !== 'string') {
-      throw new TypeError('Column name must be a string');
-    }
+    this.#validateColumnName(column, 'WHERE');
 
     if (value === null && operator !== null) {
       value = operator;
@@ -234,6 +247,7 @@ class QueryBuilder {
    * query('users').whereIn('id', [1, 2, 3]) // WHERE id IN (1, 2, 3)
    */
   whereIn(column, values) {
+    this.#validateColumnName(column, 'WHERE');
     if (!Array.isArray(values)) {
       throw new Error('whereIn() requires an array of values');
     }
@@ -253,6 +267,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   whereNotIn(column, values) {
+    this.#validateColumnName(column, 'WHERE');
     if (!Array.isArray(values)) {
       throw new Error('whereNotIn() requires an array of values');
     }
@@ -1090,6 +1105,7 @@ class QueryBuilder {
    * query('users').like('name', 'John', 'after') // WHERE name LIKE 'John%'
    */
   like(column, value, side = 'both') {
+    this.#validateColumnName(column, 'LIKE');
     const pattern = this.#createLikePattern(value, side);
     this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: 'AND' });
     return this;
@@ -1103,6 +1119,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   orLike(column, value, side = 'both') {
+    this.#validateColumnName(column, 'LIKE');
     const pattern = this.#createLikePattern(value, side);
     this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: 'OR' });
     return this;
@@ -1123,6 +1140,8 @@ class QueryBuilder {
     if (!Array.isArray(columns)) {
       columns = [columns];
     }
+
+    columns.forEach(column => this.#validateColumnName(column, 'SEARCH'));
 
     columns.forEach((column, index) => {
       const pattern = this.#createLikePattern(value, side);
@@ -1147,6 +1166,8 @@ class QueryBuilder {
     if (!Array.isArray(columns)) {
       columns = [columns];
     }
+
+    columns.forEach(column => this.#validateColumnName(column, 'SEARCH'));
 
     columns.forEach(column => {
       const pattern = this.#createLikePattern(value, side);
@@ -1221,6 +1242,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   having(column, operator = null, value = null) {
+    this.#validateColumnName(column, 'HAVING');
     if (value === null && operator !== null) {
       value = operator;
       operator = '=';
