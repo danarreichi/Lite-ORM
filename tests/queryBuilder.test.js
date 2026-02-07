@@ -1,5 +1,6 @@
 const { query, transaction, RawSql } = require('../utils/queryBuilder');
 const { dd } = require('../utils/debug');
+const User = require('../models/User');
 
 /**
  * QueryBuilder Test Suite
@@ -239,6 +240,20 @@ async function testWhereColumnHelpers() {
   assertThrows(() => {
     query('users').whereColumn('created_at', 'LIKE', 'updated_at');
   }, 'WHERE COLUMN: Rejects invalid operator');
+}
+
+async function testUserModelWhere() {
+  // Test User.where() returns QueryBuilder instance
+  const qb = User.where('username', 'john_doe');
+  assert(qb instanceof require('../utils/queryBuilder').QueryBuilder, 'User.where() returns QueryBuilder instance');
+
+  // Test User.where().get() works
+  const users = await User.where('username', 'john_doe').get();
+  assert(Array.isArray(users), 'User.where().get() returns array');
+
+  // Test chaining works
+  const user = await User.where('username', 'john_doe').first();
+  assert(user === null || typeof user === 'object', 'User.where().first() returns object or null');
 }
 
 async function testInvalidColumnIdentifiers() {
@@ -900,6 +915,7 @@ async function runAllTests() {
     await testWhereNullHelpers();
     await testWhereBetweenHelpers();
     await testWhereColumnHelpers();
+    await testUserModelWhere();
     await testInvalidColumnIdentifiers();
     
     // Grouped conditions
