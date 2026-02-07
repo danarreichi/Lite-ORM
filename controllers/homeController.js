@@ -1,5 +1,4 @@
-const { dd, dc, dump, log } = require('../utils/debug');
-const db = require('../utils/database');
+const { dd, dump, log } = require('../utils/debug');
 const { query } = require('../utils/queryBuilder');
 
 const homeController = {

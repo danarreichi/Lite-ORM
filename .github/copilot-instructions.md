@@ -617,7 +617,7 @@ Available methods:
 Similar to Laravel's `dd()` function - displays data and stops execution:
 
 ```javascript
-const { dd, dc, dump, log } = require('../utils/debug');
+const { dd, dump, log } = require('../utils/debug');
 
 // Console output (stops execution)
 dd(userData, requestObject);
@@ -626,20 +626,8 @@ dd(userData, requestObject);
 dd(res, userData, requestObject);
 ```
 
-### dc() Function (Dump and Continue)
-Similar to dd() but continues execution after showing debug output:
-
-```javascript
-// HTML output in browser (CONTINUES execution) - pass response object as first param
-dc(res, userData, requestObject);
-
-// Console output (continues execution)
-dc(userData);
-```
-
 Available functions in `utils/debug.js`:
 - `dd(res?, ...data)` - Dump and die (stops execution) - HTML if res object provided
-- `dc(res?, ...data)` - Dump and continue (continues execution) - HTML if res object provided
 - `dump(...data)` - Console dump only (continues execution)
 - `log(message, data)` - Timestamped logging
 - `pp(data)` - Pretty print JSON
