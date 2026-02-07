@@ -19,6 +19,11 @@ npm run seed
 ```bash
 # Run all queryBuilder tests
 npm test
+
+# Or run specific test files
+node tests/queryBuilder.test.js
+node tests/queryBuilder-composite-whereHas.test.js
+node tests/queryBuilder-has-callback.test.js
 ```
 
 ## Test Coverage
@@ -43,6 +48,16 @@ The test suite validates:
 - WHERE NOT EXISTS
 - OR WHERE EXISTS
 - OR WHERE NOT EXISTS
+
+### ✅ Relationship Existence Filtering (Laravel-style)
+- `whereHas()` - Filter by relationship existence with conditions
+- `orWhereHas()` - OR variant
+- `whereDoesntHave()` - Filter by relationship absence
+- `orWhereDoesntHave()` - OR variant
+- `has()` - Simple existence check with count support
+- `doesntHave()` - Simple absence check
+- Composite keys support (multiple columns)
+- Nested conditions in callbacks
 
 ### ✅ Eager Loading
 - `withMany()` - Load has-many relationships
@@ -99,6 +114,37 @@ The test suite validates:
 - Composite primary keys
 - Multiple foreign key matching
 - Debugging (`toSql()`, `getParameters()`)
+
+## Test Files
+
+### `queryBuilder.test.js`
+Main test suite covering all core functionality:
+- Basic queries (SELECT, INSERT, UPDATE, DELETE)
+- WHERE conditions and operators
+- Eager loading (withMany, withOne)
+- Aggregate functions (withSum, withCount, etc.)
+- Aggregate filtering
+- LIKE and search operations
+- JOINs, GROUP BY, ORDER BY
+- Chunking methods
+- Utility methods
+
+### `queryBuilder-composite-whereHas.test.js`
+Specialized tests for relationship existence filtering with composite keys:
+- `whereHas()` with single and composite keys
+- `whereDoesntHave()` with composite keys
+- `orWhereHas()` and `orWhereDoesntHave()`
+- Complex queries mixing multiple whereHas conditions
+- Nested conditions with composite keys
+
+### `queryBuilder-has-callback.test.js`
+Tests for `has()` method with callback support:
+- Simple existence checks without callback
+- Count-based filtering with various operators (>=, =, <)
+- Callback support for filtering related records before counting
+- Composite keys with callbacks
+- Complex nested conditions in callbacks
+- Multiple `has()` calls with different callbacks
 
 ## Test Data
 

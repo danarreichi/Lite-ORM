@@ -289,8 +289,8 @@ class QueryBuilder {
   /**
    * Add WHERE EXISTS subquery with relation
    * @param {string} relatedTable - The related table name
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the subquery
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
@@ -299,6 +299,10 @@ class QueryBuilder {
    *   q.where('status', 'completed');
    * })
    * // WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed')
+   * 
+   * @example
+   * // Composite keys
+   * query('orders').whereExistsRelation('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
    */
   whereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
     this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'EXISTS', callback));
@@ -308,14 +312,18 @@ class QueryBuilder {
   /**
    * Add OR WHERE EXISTS subquery with relation
    * @param {string} relatedTable - The related table name
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the subquery
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
    * @example
    * query('users').where('status', 'active').orWhereExistsRelation('transactions', 'user_id', 'id')
    * // WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+   * 
+   * @example
+   * // Composite keys
+   * query('orders').orWhereExistsRelation('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
    */
   orWhereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
     this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_EXISTS', callback));
@@ -325,14 +333,18 @@ class QueryBuilder {
   /**
    * Add WHERE NOT EXISTS subquery with relation
    * @param {string} relatedTable - The related table name
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the subquery
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
    * @example
    * query('users').whereNotExistsRelation('transactions', 'user_id', 'id')
    * // WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+   * 
+   * @example
+   * // Composite keys
+   * query('orders').whereNotExistsRelation('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
    */
   whereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
     this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'NOT_EXISTS', callback));
@@ -342,18 +354,215 @@ class QueryBuilder {
   /**
    * Add OR WHERE NOT EXISTS subquery with relation
    * @param {string} relatedTable - The related table name
-   * @param {string} foreignKey - Foreign key column in related table
-   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
    * @param {function} [callback] - Optional callback to add conditions to the subquery
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    *
    * @example
    * query('users').where('status', 'active').orWhereNotExistsRelation('banned_users', 'user_id', 'id')
    * // WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
+   * 
+   * @example
+   * // Composite keys
+   * query('orders').orWhereNotExistsRelation('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
    */
   orWhereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
     this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_NOT_EXISTS', callback));
     return this;
+  }
+
+  /**
+   * Filter by the existence of a relationship (Laravel-style)
+   * Alias for whereExistsRelation() with more familiar Laravel naming
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Users who have at least one completed transaction
+   * query('users').whereHas('transactions', 'user_id', 'id', function(q) {
+   *   q.where('status', 'completed');
+   * })
+   * 
+   * @example
+   * // Users who have any transactions
+   * query('users').whereHas('transactions', 'user_id', 'id')
+   * 
+   * @example
+   * // Composite keys - Orders that have items (sharded by store)
+   * query('orders').whereHas('order_items', ['order_id', 'store_id'], ['id', 'store_id'], function(q) {
+   *   q.where('quantity', '>', 0);
+   * })
+   */
+  whereHas(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    return this.whereExistsRelation(relatedTable, foreignKey, localKey, callback);
+  }
+
+  /**
+   * Filter by the existence of a relationship with OR logic (Laravel-style)
+   * Alias for orWhereExistsRelation()
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users')
+   *   .where('status', 'active')
+   *   .orWhereHas('transactions', 'user_id', 'id')
+   * 
+   * @example
+   * // Composite keys
+   * query('orders')
+   *   .where('status', 'pending')
+   *   .orWhereHas('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+   */
+  orWhereHas(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    return this.orWhereExistsRelation(relatedTable, foreignKey, localKey, callback);
+  }
+
+  /**
+   * Filter by the absence of a relationship (Laravel-style)
+   * Alias for whereNotExistsRelation()
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Users who have no transactions
+   * query('users').whereDoesntHave('transactions', 'user_id', 'id')
+   * 
+   * @example
+   * // Users who have no completed transactions
+   * query('users').whereDoesntHave('transactions', 'user_id', 'id', function(q) {
+   *   q.where('status', 'completed');
+   * })
+   * 
+   * @example
+   * // Composite keys - Orders without items
+   * query('orders').whereDoesntHave('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+   */
+  whereDoesntHave(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    return this.whereNotExistsRelation(relatedTable, foreignKey, localKey, callback);
+  }
+
+  /**
+   * Filter by the absence of a relationship with OR logic (Laravel-style)
+   * Alias for orWhereNotExistsRelation()
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users')
+   *   .where('status', 'inactive')
+   *   .orWhereDoesntHave('transactions', 'user_id', 'id')
+   * 
+   * @example
+   * // Composite keys
+   * query('orders')
+   *   .where('status', 'cancelled')
+   *   .orWhereDoesntHave('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+   */
+  orWhereDoesntHave(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    return this.orWhereNotExistsRelation(relatedTable, foreignKey, localKey, callback);
+  }
+
+  /**
+   * Filter records that have a relationship (simple existence check)
+   * Shorthand for whereHas() without conditions - checks if relationship exists
+   * Can also accept count operator to check relationship count
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @param {string} [operator='>='] - Comparison operator (>=, >, =, <, <=)
+   * @param {number} [count=1] - Minimum count of related records
+   * @param {function} [callback] - Optional callback to filter related records before counting
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Users who have at least one transaction
+   * query('users').has('transactions', 'user_id', 'id')
+   * 
+   * @example
+   * // Users who have at least 5 transactions
+   * query('users').has('transactions', 'user_id', 'id', '>=', 5)
+   * 
+   * @example
+   * // Users who have exactly 3 completed transactions
+   * query('users').has('transactions', 'user_id', 'id', '=', 3, function(q) {
+   *   q.where('status', 'completed');
+   * })
+   * 
+   * @example
+   * // Users who have at least 10 high-value transactions
+   * query('users').has('transactions', 'user_id', 'id', '>=', 10, function(q) {
+   *   q.where('amount', '>', 1000);
+   *   q.where('status', 'completed');
+   * })
+   */
+  has(relatedTable, foreignKey, localKey = 'id', operator = '>=', count = 1, callback = null) {
+    if (operator === '>=' && count === 1 && !callback) {
+      // Simple existence check without callback
+      return this.whereHas(relatedTable, foreignKey, localKey);
+    }
+    
+    // If callback provided or custom count, use whereHas with callback
+    if (callback || operator !== '>=' || count !== 1) {
+      // For custom count, wrap the callback to ensure proper filtering
+      if (operator === '>=' && count === 1) {
+        // Simple has with callback
+        return this.whereHas(relatedTable, foreignKey, localKey, callback);
+      }
+      
+      // Count-based check using aggregate subquery
+      const aggregate = {
+        type: 'COUNT',
+        relatedTable: relatedTable,
+        foreignKey: foreignKey,
+        localKey: localKey,
+        column: '*',
+        alias: `__temp_${relatedTable}_count`,
+        callback: callback
+      };
+      
+      // Add to where using aggregate subquery builder
+      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, count, 'AND'));
+      
+      return this;
+    }
+    
+    return this;
+  }
+
+  /**
+   * Filter records that don't have a relationship (simple non-existence check)
+   * Shorthand for whereDoesntHave() without conditions
+   * 
+   * @param {string} relatedTable - The related table name
+   * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key column(s) (defaults to 'id', string or array for composite keys)
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Users who have no transactions
+   * query('users').doesntHave('transactions', 'user_id', 'id')
+   */
+  doesntHave(relatedTable, foreignKey, localKey = 'id') {
+    return this.whereDoesntHave(relatedTable, foreignKey, localKey);
   }
 
   /**
@@ -535,10 +744,11 @@ class QueryBuilder {
 
   /**
    * Build EXISTS subquery for whereExists methods
+   * Supports both single keys and composite keys (arrays)
    * @private
    * @param {string} relatedTable - Related table name
-   * @param {string} foreignKey - Foreign key in related table
-   * @param {string} localKey - Local key in current table
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table (string or array for composite keys)
+   * @param {string|string[]} localKey - Local key(s) in current table (string or array for composite keys)
    * @param {string} type - EXISTS type ('EXISTS', 'OR_EXISTS', 'NOT_EXISTS', 'OR_NOT_EXISTS')
    * @param {function|null} callback - Optional callback for additional conditions
    * @returns {object} WHERE condition object with EXISTS subquery
@@ -546,7 +756,24 @@ class QueryBuilder {
   #buildExistsSubquery(relatedTable, foreignKey, localKey, type, callback) {
     const subQuery = new QueryBuilder();
     subQuery.select('1').from(relatedTable);
-    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.#query.table}.${localKey}`));
+    
+    // Handle composite keys (arrays) or single key
+    if (Array.isArray(foreignKey)) {
+      const foreignKeys = foreignKey;
+      const localKeys = Array.isArray(localKey) ? localKey : [localKey];
+
+      if (foreignKeys.length !== localKeys.length) {
+        throw new Error(`Foreign keys and local keys must have the same length for composite keys`);
+      }
+
+      // Add multiple WHERE conditions for composite keys
+      foreignKeys.forEach((fk, i) => {
+        subQuery.where(`${relatedTable}.${fk}`, new RawSql(`${this.#query.table}.${localKeys[i]}`));
+      });
+    } else {
+      // Single key
+      subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.#query.table}.${localKey}`));
+    }
 
     // Add additional conditions if callback provided
     if (callback && typeof callback === 'function') {

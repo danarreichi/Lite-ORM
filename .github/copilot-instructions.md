@@ -447,56 +447,107 @@ const premiumActiveUsers = await query('users')
   .where('avg_amount', '>', 500)        // Auto-detected as aggregate
   .orWhere('role', 'vip')               // Normal column
   .get();
-  .get();
-// WHERE (SELECT COUNT(*) FROM transactions WHERE transactions.user_id = users.id) >= 5
 
-// Combine multiple aggregate filters
-const vipUsers = await query('users')
-  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+// Relationship Existence Filtering - whereHas() & whereDoesntHave() (Laravel-style)
+// Filter records based on the existence of related records
+
+// whereHas - Users who have completed transactions
+const usersWithCompletedTransactions = await query('users')
+  .whereHas('transactions', 'user_id', 'id', function(q) {
+    q.where('status', 'completed');
+    q.where('amount', '>', 1000);
+  })
+  .get();
+// WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed' AND amount > 1000)
+
+// whereDoesntHave - Users who have no transactions
+const usersWithoutTransactions = await query('users')
+  .whereDoesntHave('transactions', 'user_id', 'id')
+  .get();
+// WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+
+// orWhereHas - Active users OR users with transactions
+const activeOrHasTransactions = await query('users')
+  .where('status', 'active')
+  .orWhereHas('transactions', 'user_id', 'id')
+  .get();
+// WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+
+// orWhereDoesntHave - Inactive users OR users without bans
+const inactiveOrNoBans = await query('users')
+  .where('status', 'inactive')
+  .orWhereDoesntHave('banned_users', 'user_id', 'id')
+  .get();
+// WHERE status = 'inactive' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
+
+// has() - Simple existence check (shorthand without callback)
+const usersWithAnyTransactions = await query('users')
+  .has('transactions', 'user_id', 'id')
+  .get();
+// WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+
+// has() with count - Users with at least 5 transactions
+const activeUsersWithMultipleTransactions = await query('users')
+  .where('status', 'active')
+  .has('transactions', 'user_id', 'id', '>=', 5)
+  .get();
+
+// has() with exact count - Users with exactly 3 reviews
+const usersWithExactReviews = await query('users')
+  .has('reviews', 'user_id', 'id', '=', 3)
+  .get();
+
+// has() with callback - Users with at least 5 completed transactions
+const usersWithCompletedTransactions = await query('users')
+  .has('transactions', 'user_id', 'id', '>=', 5, function(q) {
+    q.where('status', 'completed');
+    q.where('amount', '>', 1000);
+  })
+  .get();
+// Counts only completed transactions over $1000
+
+// doesntHave() - Simple non-existence check (shorthand)
+const usersWithoutReviews = await query('users')
+  .doesntHave('reviews', 'user_id', 'id')
+  .get();
+// WHERE NOT EXISTS (SELECT 1 FROM reviews WHERE reviews.user_id = users.id)
+
+// Complex combinations
+const complexQuery = await query('users')
+  .where('status', 'active')
+  .whereHas('transactions', 'user_id', 'id', function(q) {
     q.where('status', 'completed');
     q.where('created_at', '>', '2025-01-01');
   })
-  .withCount({'transactions': 'total_count'}, 'user_id', 'id')
-  .where('total_spent', '>', 50000)
-  .where('total_count', '>=', 10)
+  .whereDoesntHave('banned_users', 'user_id', 'id')
+  .has('reviews', 'user_id', 'id', '>=', 2)
   .get();
-// Filter VIP users with >50k in completed transactions since 2025 AND at least 10 transactions
+// Active users with completed transactions since 2025, not banned, and have at least 2 reviews
 
-// Mix with normal WHERE conditions
-const premiumActiveUsers = await query('users')
-  .withAvg({'transactions': 'avg_amount'}, 'user_id', 'id', 'amount')
-  .where('status', 'active')
-  .where('avg_amount', '>', 500)
-  .orWhere('role', 'vip')
+// Composite Keys with whereHas() - Orders with items (sharded database)
+const ordersWithItems = await query('orders')
+  .whereHas('order_items', ['order_id', 'store_id'], ['id', 'store_id'], function(q) {
+    q.where('quantity', '>', 0);
+    q.where('status', 'active');
+  })
   .get();
+// WHERE EXISTS (SELECT 1 FROM order_items WHERE order_items.order_id = orders.id 
+//   AND order_items.store_id = orders.store_id AND quantity > 0 AND status = 'active')
 
-// EXISTS subqueries for filtering based on related records
-const usersWithCompletedTransactions = await query('users')
+// Composite Keys with whereDoesntHave() - Orders without items
+const ordersWithoutItems = await query('orders')
+  .whereDoesntHave('order_items', ['order_id', 'store_id'], ['id', 'store_id'])
+  .get();
+// WHERE NOT EXISTS (SELECT 1 FROM order_items WHERE order_items.order_id = orders.id 
+//   AND order_items.store_id = orders.store_id)
+
+// whereExistsRelation() - Lower-level alternative (use whereHas() for better readability)
+const usersWithCompletedTransactionsAlt = await query('users')
   .whereExistsRelation('transactions', 'user_id', 'id', function(q) {
     q.where('status', 'completed');
   })
   .get();
-// WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed')
-
-// NOT EXISTS - users without transactions
-const usersWithoutTransactions = await query('users')
-  .whereNotExistsRelation('transactions', 'user_id', 'id')
-  .get();
-// WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
-
-// OR EXISTS
-const activeOrHasTransactions = await query('users')
-  .where('status', 'active')
-  .orWhereExistsRelation('transactions', 'user_id', 'id')
-  .get();
-// WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
-
-// OR NOT EXISTS
-const activeOrNoBans = await query('users')
-  .where('status', 'active')
-  .orWhereNotExistsRelation('banned_users', 'user_id', 'id')
-  .get();
-// WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
+// Same as whereHas() - both generate: WHERE EXISTS (SELECT 1 FROM ...)
 
 // Composite Keys - Support for tables with composite primary keys
 // user_product_favorites has composite PK (user_id, product_id) - no id column!
@@ -566,10 +617,16 @@ Available methods:
 - `orWhere(column, operator, value)` - Add OR WHERE condition (auto-detects aggregate aliases)
 - `whereIn(column, values)` - WHERE IN condition
 - `whereNotIn(column, values)` - WHERE NOT IN condition
-- `whereExistsRelation(table, foreignKey, localKey, callback)` - WHERE EXISTS subquery with relation
-- `orWhereExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE EXISTS subquery
-- `whereNotExistsRelation(table, foreignKey, localKey, callback)` - WHERE NOT EXISTS subquery
-- `orWhereNotExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE NOT EXISTS subquery
+- `whereExistsRelation(table, foreignKey, localKey, callback)` - WHERE EXISTS subquery with relation (lower-level)
+- `orWhereExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE EXISTS subquery (lower-level)
+- `whereNotExistsRelation(table, foreignKey, localKey, callback)` - WHERE NOT EXISTS subquery (lower-level)
+- `orWhereNotExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE NOT EXISTS subquery (lower-level)
+- `whereHas(table, foreignKey, localKey, callback)` - Filter by relationship existence (Laravel-style, recommended)
+- `orWhereHas(table, foreignKey, localKey, callback)` - OR filter by relationship existence
+- `whereDoesntHave(table, foreignKey, localKey, callback)` - Filter by relationship absence
+- `orWhereDoesntHave(table, foreignKey, localKey, callback)` - OR filter by relationship absence
+- `has(table, foreignKey, localKey, operator, count, callback)` - Check relationship existence with optional count and filter
+- `doesntHave(table, foreignKey, localKey)` - Check relationship absence (shorthand)
 - `group(callback)` - Start a grouped condition (AND logic) with callback
 - `orGroup(callback)` - Start a grouped condition (OR logic) with callback
 - `withMany('table', foreignKey, localKey, callback)` - Eager load has-many (shorthand: table = property name, supports arrays for composite keys)

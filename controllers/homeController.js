@@ -203,7 +203,7 @@ const homeController = {
     
     // Example 6: Find users who reviewed specific products with composite filtering
     const example6 = await query('users')
-      .whereExistsRelation('reviews', 'user_id', 'id', function(q) {
+      .whereHas('reviews', 'user_id', 'id', function(q) {
         q.where('product_id', 1); // Wireless Headphones
         q.where('rating', '>=', 4);
       })
