@@ -27,9 +27,12 @@ const homeController = {
     // Example 1: Load users with their reviews (using composite keys)
     // Reviews table has both user_id and product_id foreign keys
     const example1 = await query('users')
-      .select(['id', 'username', 'email'])
+      .select(['username', 'email'])
       .withMany({'reviews': 'userReviews'}, 'user_id', 'id', function(q) {
-        q.withOne('products', 'id', 'product_id'); // Nested relation
+        q.select(['title', 'content']);
+        q.withOne('products', 'id', 'product_id', function(q) {
+          q.select('name');
+        }); // Nested relation
       })
       .get();
     

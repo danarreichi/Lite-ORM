@@ -72,7 +72,8 @@ class QueryBuilder {
       set: null,
       values: null,
       with: [],
-      aggregates: []
+      aggregates: [],
+      autoAddedColumns: [] // Track columns auto-added for relationships
     };
     this.#parameters = [];
     return this;
@@ -1203,6 +1204,38 @@ class QueryBuilder {
       case 'SELECT':
         let selectClause = this.#query.select;
 
+        // Auto-include local keys needed for eager loading
+        if (selectClause !== '*' && this.#query.with.length > 0) {
+          const selectColumns = selectClause.split(',').map(col => col.trim());
+          const requiredKeys = new Set();
+
+          // Collect all local keys needed for relationships
+          this.#query.with.forEach(rel => {
+            if (Array.isArray(rel.localKey)) {
+              rel.localKey.forEach(key => requiredKeys.add(key));
+            } else {
+              requiredKeys.add(rel.localKey);
+            }
+          });
+
+          // Add missing keys to select (with table prefix if needed)
+          requiredKeys.forEach(key => {
+            const hasKey = selectColumns.some(col => {
+              const cleanCol = col.replace(/.*\./, ''); // Remove table prefix
+              return cleanCol === key || cleanCol.startsWith(`${key} `);
+            });
+            
+            if (!hasKey) {
+              const keyWithTable = `${this.#query.table}.${key}`;
+              selectColumns.push(keyWithTable);
+              // Track this column as auto-added
+              this.#query.autoAddedColumns.push(key);
+            }
+          });
+
+          selectClause = selectColumns.join(', ');
+        }
+
         // Add aggregate subqueries if any
         if (this.#query.aggregates.length > 0) {
           const aggregateSelects = this.#query.aggregates.map(agg => {
@@ -1331,6 +1364,17 @@ class QueryBuilder {
     // Process eager loaded relationships (two-query approach like Laravel)
     if (this.#query.with.length > 0 && rows.length > 0) {
       rows = await this.#loadRelations(rows, this.#query.with);
+    }
+
+    // Remove auto-added columns from results if they weren't explicitly selected
+    if (this.#query.autoAddedColumns.length > 0 && rows.length > 0) {
+      rows = rows.map(row => {
+        const cleanRow = { ...row };
+        this.#query.autoAddedColumns.forEach(col => {
+          delete cleanRow[col];
+        });
+        return cleanRow;
+      });
     }
 
     this.#reset(); // Reset for next query
@@ -1599,8 +1643,29 @@ class QueryBuilder {
         });
 
         // Apply callback conditions and capture nested withMany/withOne calls
+        const addedForeignKeys = []; // Track FK columns we add for mapping
         if (relation.callback && typeof relation.callback === 'function') {
           relation.callback(relatedQuery);
+          
+          // Ensure foreign keys are selected if callback used select()
+          // We need them to map records back to parents
+          if (relatedQuery.#query.select !== '*') {
+            const selectColumns = relatedQuery.#query.select.split(',').map(col => col.trim());
+            
+            foreignKeys.forEach(fk => {
+              const hasForeignKey = selectColumns.some(col => {
+                const cleanCol = col.replace(/.*\./, '');
+                return cleanCol === fk || cleanCol.startsWith(`${fk} `);
+              });
+              
+              if (!hasForeignKey) {
+                selectColumns.push(`${relation.relatedTable}.${fk}`);
+                addedForeignKeys.push(fk); // Track that we added this
+              }
+            });
+            
+            relatedQuery.#query.select = selectColumns.join(', ');
+          }
         }
 
         // Fetch related records
@@ -1613,13 +1678,31 @@ class QueryBuilder {
           relatedRecords = await this.#loadRelations(relatedRecords, relatedQuery.#query.with);
         }
 
+        // Remove auto-added columns from related records
+        if (relatedQuery.#query.autoAddedColumns.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = relatedRecords.map(record => {
+            const cleanRecord = { ...record };
+            relatedQuery.#query.autoAddedColumns.forEach(col => {
+              delete cleanRecord[col];
+            });
+            return cleanRecord;
+          });
+        }
+
         // Group related records by composite key
         if (relation.type === 'hasOne') {
           const mappedRelated = {};
           relatedRecords.forEach(record => {
             const compositeKey = foreignKeys.map(fk => record[fk]).join('|');
             if (!mappedRelated[compositeKey]) {
-              mappedRelated[compositeKey] = record;
+              // Remove foreign keys that we added for mapping
+              if (addedForeignKeys.length > 0) {
+                const cleanRecord = { ...record };
+                addedForeignKeys.forEach(fk => delete cleanRecord[fk]);
+                mappedRelated[compositeKey] = cleanRecord;
+              } else {
+                mappedRelated[compositeKey] = record;
+              }
             }
           });
 
@@ -1632,10 +1715,18 @@ class QueryBuilder {
           const groupedRelated = {};
           relatedRecords.forEach(record => {
             const compositeKey = foreignKeys.map(fk => record[fk]).join('|');
+            
+            // Remove foreign keys that we added for mapping
+            let cleanRecord = record;
+            if (addedForeignKeys.length > 0) {
+              cleanRecord = { ...record };
+              addedForeignKeys.forEach(fk => delete cleanRecord[fk]);
+            }
+            
             if (!groupedRelated[compositeKey]) {
               groupedRelated[compositeKey] = [];
             }
-            groupedRelated[compositeKey].push(record);
+            groupedRelated[compositeKey].push(cleanRecord);
           });
 
           rows = rows.map(row => {
@@ -1662,8 +1753,25 @@ class QueryBuilder {
         relatedQuery.whereIn(relation.foreignKey, localKeyValues);
 
         // Apply callback conditions and capture nested withMany/withOne calls
+        let addedForeignKey = false; // Track if we added FK for mapping
         if (relation.callback && typeof relation.callback === 'function') {
           relation.callback(relatedQuery);
+          
+          // Ensure foreign key is selected if callback used select()
+          // We need it to map records back to parents
+          if (relatedQuery.#query.select !== '*') {
+            const selectColumns = relatedQuery.#query.select.split(',').map(col => col.trim());
+            const hasForeignKey = selectColumns.some(col => {
+              const cleanCol = col.replace(/.*\./, '');
+              return cleanCol === relation.foreignKey || cleanCol.startsWith(`${relation.foreignKey} `);
+            });
+            
+            if (!hasForeignKey) {
+              selectColumns.push(`${relation.relatedTable}.${relation.foreignKey}`);
+              relatedQuery.#query.select = selectColumns.join(', ');
+              addedForeignKey = true; // Track that we added this
+            }
+          }
         }
 
         // Fetch related records
@@ -1676,13 +1784,31 @@ class QueryBuilder {
           relatedRecords = await this.#loadRelations(relatedRecords, relatedQuery.#query.with);
         }
 
+        // Remove auto-added columns from related records
+        if (relatedQuery.#query.autoAddedColumns.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = relatedRecords.map(record => {
+            const cleanRecord = { ...record };
+            relatedQuery.#query.autoAddedColumns.forEach(col => {
+              delete cleanRecord[col];
+            });
+            return cleanRecord;
+          });
+        }
+
         if (relation.type === 'hasOne') {
           // For hasOne: create map of foreignKey -> single record (first match)
           const mappedRelated = {};
           relatedRecords.forEach(record => {
             const fk = record[relation.foreignKey];
             if (!mappedRelated[fk]) {
-              mappedRelated[fk] = record; // Only take first match
+              // Remove foreign key that we added for mapping
+              if (addedForeignKey) {
+                const cleanRecord = { ...record };
+                delete cleanRecord[relation.foreignKey];
+                mappedRelated[fk] = cleanRecord;
+              } else {
+                mappedRelated[fk] = record; // Only take first match
+              }
             }
           });
 
@@ -1697,10 +1823,18 @@ class QueryBuilder {
           const groupedRelated = {};
           relatedRecords.forEach(record => {
             const fk = record[relation.foreignKey];
+            
+            // Remove foreign key that we added for mapping
+            let cleanRecord = record;
+            if (addedForeignKey) {
+              cleanRecord = { ...record };
+              delete cleanRecord[relation.foreignKey];
+            }
+            
             if (!groupedRelated[fk]) {
               groupedRelated[fk] = [];
             }
-            groupedRelated[fk].push(record);
+            groupedRelated[fk].push(cleanRecord);
           });
 
           // Attach related records array to parent records
