@@ -27,6 +27,11 @@ const homeController = {
               q.where('item_name', 'USB-C Cable');
             })
         })
+        .orWhereExistsRelation('transactions', 'user_id', 'id', function(q) {
+            q.whereExistsRelation('transaction_details', 'transaction_id', 'id', function(q){
+              q.where('item_name', 'Wireless Headphones');
+            })
+        })
         .withMany('transactions', 'user_id', 'id', function(q) {
           q.withMany('transaction_details', 'transaction_id', 'id', function(q) {
             q.withOne('products', 'id', 'product_id');

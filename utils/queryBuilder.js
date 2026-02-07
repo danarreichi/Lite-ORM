@@ -222,6 +222,96 @@ class QueryBuilder {
   }
 
   /**
+   * Add OR WHERE EXISTS subquery with relation
+   * @param {string} relatedTable - The related table name
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').where('status', 'active').orWhereExistsRelation('transactions', 'user_id', 'id')
+   * // WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+   */
+  orWhereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    const subQuery = new QueryBuilder();
+    subQuery.select('1').from(relatedTable);
+    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.query.table}.${localKey}`));
+
+    if (callback && typeof callback === 'function') {
+      callback(subQuery);
+    }
+
+    this.query.where.push({
+      type: 'OR_EXISTS',
+      subQuery: subQuery,
+      relation: { relatedTable, foreignKey, localKey }
+    });
+
+    return this;
+  }
+
+  /**
+   * Add WHERE NOT EXISTS subquery with relation
+   * @param {string} relatedTable - The related table name
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').whereNotExistsRelation('transactions', 'user_id', 'id')
+   * // WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+   */
+  whereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    const subQuery = new QueryBuilder();
+    subQuery.select('1').from(relatedTable);
+    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.query.table}.${localKey}`));
+
+    if (callback && typeof callback === 'function') {
+      callback(subQuery);
+    }
+
+    this.query.where.push({
+      type: 'NOT_EXISTS',
+      subQuery: subQuery,
+      relation: { relatedTable, foreignKey, localKey }
+    });
+
+    return this;
+  }
+
+  /**
+   * Add OR WHERE NOT EXISTS subquery with relation
+   * @param {string} relatedTable - The related table name
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').where('status', 'active').orWhereNotExistsRelation('banned_users', 'user_id', 'id')
+   * // WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
+   */
+  orWhereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    const subQuery = new QueryBuilder();
+    subQuery.select('1').from(relatedTable);
+    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.query.table}.${localKey}`));
+
+    if (callback && typeof callback === 'function') {
+      callback(subQuery);
+    }
+
+    this.query.where.push({
+      type: 'OR_NOT_EXISTS',
+      subQuery: subQuery,
+      relation: { relatedTable, foreignKey, localKey }
+    });
+
+    return this;
+  }
+
+  /**
    * Eager load has-many relationship (one-to-many)
    * Uses two-query approach to load related records efficiently
    * 
@@ -582,16 +672,20 @@ class QueryBuilder {
         sql += ')';
         groupLevel--;
         conditionsInGroup.pop();
-      } else if (condition.type === 'EXISTS') {
+      } else if (condition.type === 'EXISTS' || condition.type === 'OR_EXISTS' || 
+                 condition.type === 'NOT_EXISTS' || condition.type === 'OR_NOT_EXISTS') {
         // Add AND/OR if this is not the first condition in current group
         if (conditionsInGroup[groupLevel] > 0) {
-          sql += ' AND ';
+          // Determine if this is an OR condition
+          const isOr = condition.type === 'OR_EXISTS' || condition.type === 'OR_NOT_EXISTS';
+          sql += isOr ? ' OR ' : ' AND ';
         }
         conditionsInGroup[groupLevel]++;
 
         // Build the EXISTS subquery
         const subSql = condition.subQuery.buildSql();
-        sql += `EXISTS (${subSql})`;
+        const isNegated = condition.type === 'NOT_EXISTS' || condition.type === 'OR_NOT_EXISTS';
+        sql += isNegated ? `NOT EXISTS (${subSql})` : `EXISTS (${subSql})`;
         // Add subquery parameters to main parameters array
         this.parameters.push(...condition.subQuery.parameters);
       } else {
@@ -732,6 +826,216 @@ class QueryBuilder {
     
     this.reset(); // Reset for next query
     return rows;
+  }
+
+  /**
+   * Process query results in chunks to avoid memory issues with large datasets
+   * Similar to Laravel's chunk() method - processes records in batches
+   * Note: Eager loading (withMany/withOne) is NOT applied in chunk mode for memory efficiency
+   * 
+   * @param {number} size - Number of records per chunk
+   * @param {function} callback - Function to process each chunk (receives rows and page number)
+   * @returns {Promise<boolean>} True when chunking completes
+   *
+   * @example
+   * // Process users in batches of 100
+   * await query('users').where('status', 'active').chunk(100, async (users, page) => {
+   *   console.log(`Processing page ${page} with ${users.length} users`);
+   *   for (const user of users) {
+   *     await processUser(user);
+   *   }
+   * });
+   * 
+   * @example
+   * // Return false to stop chunking early
+   * await query('users').chunk(100, async (users, page) => {
+   *   console.log(`Page ${page}`);
+   *   if (page >= 5) {
+   *     return false; // Stop after 5 pages
+   *   }
+   * });
+   */
+  async chunk(size, callback) {
+    if (typeof callback !== 'function') {
+      throw new Error('chunk() requires a callback function');
+    }
+    
+    if (!Number.isInteger(size) || size <= 0) {
+      throw new Error('chunk() size must be a positive integer');
+    }
+    
+    let page = 0;
+    
+    // Save the original limit and offset
+    const originalLimit = this.query.limit;
+    const originalOffset = this.query.offset;
+    
+    try {
+      while (true) {
+        // Reset parameters for each iteration
+        this.parameters = [];
+        
+        // Set pagination for this chunk
+        this.query.limit = size;
+        this.query.offset = page * size;
+        
+        // Execute query (without eager loading to keep memory efficient)
+        const sql = this.buildSql();
+        const result = await db.query(sql, this.parameters);
+        const rows = result.rows;
+        
+        // No more rows, we're done
+        if (rows.length === 0) {
+          break;
+        }
+        
+        // Execute callback with chunk and page number
+        const shouldContinue = await callback(rows, page);
+        
+        // If callback returns false, stop chunking
+        if (shouldContinue === false) {
+          break;
+        }
+        
+        // If we got fewer rows than chunk size, we're done
+        if (rows.length < size) {
+          break;
+        }
+        
+        page++;
+      }
+    } finally {
+      // Restore original values and reset
+      this.query.limit = originalLimit;
+      this.query.offset = originalOffset;
+      this.reset();
+    }
+    
+    return true;
+  }
+
+  /**
+   * Process query results in chunks using ID-based pagination (more efficient than offset)
+   * Similar to Laravel's chunkById() - uses WHERE id > lastId instead of OFFSET
+   * This is more efficient for very large datasets as it avoids OFFSET performance issues
+   * Note: Eager loading (withMany/withOne) is NOT applied in chunk mode for memory efficiency
+   * 
+   * @param {number} size - Number of records per chunk
+   * @param {function} callback - Function to process each chunk (receives rows and page number)
+   * @param {string} [column='id'] - Column name to use for chunking (must be indexed and unique)
+   * @param {string} [alias=null] - Optional table alias if using joins
+   * @returns {Promise<boolean>} True when chunking completes
+   *
+   * @example
+   * // Process users efficiently using ID-based pagination
+   * await query('users').where('status', 'active').chunkById(100, async (users, page) => {
+   *   console.log(`Processing page ${page} with ${users.length} users`);
+   *   for (const user of users) {
+   *     await processUser(user);
+   *   }
+   * });
+   * 
+   * @example
+   * // Use custom column for chunking
+   * await query('transactions').chunkById(500, async (transactions, page) => {
+   *   await processTransactions(transactions);
+   * }, 'transaction_id');
+   * 
+   * @example
+   * // With table alias (when using joins)
+   * await query('users')
+   *   .join('profiles', 'users.id = profiles.user_id')
+   *   .chunkById(100, async (rows) => {
+   *     // Process...
+   *   }, 'id', 'users');
+   */
+  async chunkById(size, callback, column = 'id', alias = null) {
+    if (typeof callback !== 'function') {
+      throw new Error('chunkById() requires a callback function');
+    }
+    
+    if (!Number.isInteger(size) || size <= 0) {
+      throw new Error('chunkById() size must be a positive integer');
+    }
+    
+    let page = 0;
+    let lastId = null;
+    
+    // Save original values
+    const originalLimit = this.query.limit;
+    const originalOrderBy = [...this.query.orderBy];
+    const originalWhere = [...this.query.where];
+    
+    // Determine the full column name (with alias if provided)
+    const fullColumn = alias ? `${alias}.${column}` : column;
+    
+    try {
+      // Add ORDER BY if not already present for the chunk column
+      const hasOrderBy = this.query.orderBy.some(order => 
+        order.column === column || order.column === fullColumn
+      );
+      
+      if (!hasOrderBy) {
+        this.query.orderBy.push({ column: fullColumn, direction: 'ASC' });
+      }
+      
+      while (true) {
+        // Reset parameters for each iteration
+        this.parameters = [];
+        
+        // Set WHERE condition for ID-based pagination
+        if (lastId !== null) {
+          this.query.where.push({ 
+            column: fullColumn, 
+            operator: '>', 
+            value: lastId, 
+            type: 'AND' 
+          });
+        }
+        
+        // Set limit for this chunk
+        this.query.limit = size;
+        
+        // Execute query (without eager loading to keep memory efficient)
+        const sql = this.buildSql();
+        const result = await db.query(sql, this.parameters);
+        const rows = result.rows;
+        
+        // No more rows, we're done
+        if (rows.length === 0) {
+          break;
+        }
+        
+        // Get the last ID from this chunk for next iteration
+        lastId = rows[rows.length - 1][column];
+        
+        // Execute callback with chunk and page number
+        const shouldContinue = await callback(rows, page);
+        
+        // If callback returns false, stop chunking
+        if (shouldContinue === false) {
+          break;
+        }
+        
+        // If we got fewer rows than chunk size, we're done
+        if (rows.length < size) {
+          break;
+        }
+        
+        // Reset where conditions for next iteration (keep original conditions)
+        this.query.where = [...originalWhere];
+        
+        page++;
+      }
+    } finally {
+      // Restore original values and reset
+      this.query.limit = originalLimit;
+      this.query.orderBy = originalOrderBy;
+      this.query.where = originalWhere;
+      this.reset();
+    }
+    
+    return true;
   }
 
   /**

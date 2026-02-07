@@ -331,6 +331,57 @@ const usersComplete = await query('users')
 // users[0].profiles = {...} (single object)
 // users[0].transactions = [{...}, {...}] (array)
 
+// EXISTS subqueries for filtering based on related records
+const usersWithCompletedTransactions = await query('users')
+  .whereExistsRelation('transactions', 'user_id', 'id', function(q) {
+    q.where('status', 'completed');
+  })
+  .get();
+// WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed')
+
+// NOT EXISTS - users without transactions
+const usersWithoutTransactions = await query('users')
+  .whereNotExistsRelation('transactions', 'user_id', 'id')
+  .get();
+// WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+
+// OR EXISTS
+const activeOrHasTransactions = await query('users')
+  .where('status', 'active')
+  .orWhereExistsRelation('transactions', 'user_id', 'id')
+  .get();
+// WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
+
+// OR NOT EXISTS
+const activeOrNoBans = await query('users')
+  .where('status', 'active')
+  .orWhereNotExistsRelation('banned_users', 'user_id', 'id')
+  .get();
+// WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
+
+// Chunking large datasets (process in batches to avoid memory issues)
+await query('users')
+  .where('status', 'active')
+  .orderBy('id', 'ASC')
+  .chunk(100, async (users, page) => {
+    console.log(`Processing page ${page} with ${users.length} users`);
+    for (const user of users) {
+      await processUser(user);
+    }
+    // Return false to stop early
+    // if (someCondition) return false;
+  });
+
+// Chunking by ID (more efficient for very large datasets - uses WHERE id > lastId)
+await query('users')
+  .where('status', 'active')
+  .chunkById(100, async (users, page) => {
+    console.log(`Processing page ${page} with ${users.length} users`);
+    for (const user of users) {
+      await processUser(user);
+    }
+  });
+
 // Count and single values
 const total = await query('users').count();
 const email = await query('users').where('id', 1).value('email');
@@ -344,6 +395,10 @@ Available methods:
 - `orWhere(column, operator, value)` - Add OR WHERE condition
 - `whereIn(column, values)` - WHERE IN condition
 - `whereNotIn(column, values)` - WHERE NOT IN condition
+- `whereExistsRelation(table, foreignKey, localKey, callback)` - WHERE EXISTS subquery with relation
+- `orWhereExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE EXISTS subquery
+- `whereNotExistsRelation(table, foreignKey, localKey, callback)` - WHERE NOT EXISTS subquery
+- `orWhereNotExistsRelation(table, foreignKey, localKey, callback)` - OR WHERE NOT EXISTS subquery
 - `group(callback)` - Start a grouped condition (AND logic) with callback
 - `orGroup(callback)` - Start a grouped condition (OR logic) with callback
 - `withMany('table', foreignKey, localKey, callback)` - Eager load has-many (shorthand: table = property name)
@@ -366,6 +421,8 @@ Available methods:
 - `update(data)` - Prepare UPDATE query
 - `delete(table)` - Prepare DELETE query
 - `get()` - Execute SELECT and return results
+- `chunk(size, callback)` - Process results in batches (returns rows and page number to callback)
+- `chunkById(size, callback, column, alias)` - Process results in batches using ID-based pagination (more efficient)
 - `first()` - Execute and return first row
 - `count()` - Return count of records
 - `value(column)` - Return single column value
