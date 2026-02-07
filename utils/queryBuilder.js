@@ -52,7 +52,8 @@ class QueryBuilder {
       offset: null,
       set: null,
       values: null,
-      with: []
+      with: [],
+      aggregates: []
     };
     this.parameters = [];
     return this;
@@ -69,7 +70,12 @@ class QueryBuilder {
    */
   select(columns = '*') {
     this.query.type = 'SELECT';
-    this.query.select = Array.isArray(columns) ? columns.join(', ') : columns;
+    if (columns === '*' && this.query.aggregates.length > 0) {
+      // Keep '*' but we'll add aggregates in buildSql
+      this.query.select = columns;
+    } else {
+      this.query.select = Array.isArray(columns) ? columns.join(', ') : columns;
+    }
     return this;
   }
 
@@ -106,6 +112,12 @@ class QueryBuilder {
    * query('users').where('id', 1) // WHERE id = 1
    * query('users').where('age', '>', 18) // WHERE age > 18
    * query('users').where('status', 'active') // WHERE status = 'active'
+   * 
+   * // Auto-detect aggregate aliases
+   * query('users')
+   *   .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount')
+   *   .where('total_spent', '>', 10000)
+   *   .get();
    */
   where(column, operator = null, value = null) {
     if (value === null && operator !== null) {
@@ -114,7 +126,37 @@ class QueryBuilder {
       operator = '=';
     }
 
-    this.query.where.push({ column, operator, value, type: 'AND' });
+    // Check if column matches any aggregate alias
+    const aggregate = this.query.aggregates.find(agg => agg.alias === column);
+    
+    if (aggregate) {
+      // Auto-generate aggregate subquery
+      const subQuery = new QueryBuilder();
+      subQuery.from(aggregate.relatedTable);
+      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      
+      // Apply callback if provided in aggregate definition
+      if (aggregate.callback && typeof aggregate.callback === 'function') {
+        aggregate.callback(subQuery);
+      }
+      
+      // Build aggregate function
+      const aggFunc = aggregate.type === 'COUNT' ? 'COUNT(*)' : `${aggregate.type}(${aggregate.column})`;
+      subQuery.query.select = aggFunc;
+      subQuery.query.type = 'SELECT';
+      
+      this.query.where.push({
+        type: 'AGGREGATE_SUBQUERY',
+        subQuery: subQuery,
+        operator: operator,
+        value: value,
+        logicType: 'AND'
+      });
+    } else {
+      // Normal WHERE condition
+      this.query.where.push({ column, operator, value, type: 'AND' });
+    }
+    
     return this;
   }
 
@@ -127,6 +169,13 @@ class QueryBuilder {
    *
    * @example
    * query('users').where('status', 'active').orWhere('role', 'admin')
+   * 
+   * // Auto-detect aggregate aliases
+   * query('users')
+   *   .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount')
+   *   .where('status', 'active')
+   *   .orWhere('total_spent', '>', 10000)
+   *   .get();
    */
   orWhere(column, operator = null, value = null) {
     if (value === null && operator !== null) {
@@ -134,7 +183,37 @@ class QueryBuilder {
       operator = '=';
     }
 
-    this.query.where.push({ column, operator, value, type: 'OR' });
+    // Check if column matches any aggregate alias
+    const aggregate = this.query.aggregates.find(agg => agg.alias === column);
+    
+    if (aggregate) {
+      // Auto-generate aggregate subquery
+      const subQuery = new QueryBuilder();
+      subQuery.from(aggregate.relatedTable);
+      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      
+      // Apply callback if provided in aggregate definition
+      if (aggregate.callback && typeof aggregate.callback === 'function') {
+        aggregate.callback(subQuery);
+      }
+      
+      // Build aggregate function
+      const aggFunc = aggregate.type === 'COUNT' ? 'COUNT(*)' : `${aggregate.type}(${aggregate.column})`;
+      subQuery.query.select = aggFunc;
+      subQuery.query.type = 'SELECT';
+      
+      this.query.where.push({
+        type: 'AGGREGATE_SUBQUERY',
+        subQuery: subQuery,
+        operator: operator,
+        value: value,
+        logicType: 'OR'
+      });
+    } else {
+      // Normal OR WHERE condition
+      this.query.where.push({ column, operator, value, type: 'OR' });
+    }
+
     return this;
   }
 
@@ -406,6 +485,255 @@ class QueryBuilder {
       relatedTable,
       foreignKey,
       localKey,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Add SUM aggregate for related table
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string} foreignKey - Foreign key in related table
+   * @param {string} localKey - Local key in current table
+   * @param {string} column - Column to sum
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Standard syntax - auto alias
+   * const users = await query('users')
+   *   .withSum('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_sum = 15000
+   * 
+   * @example
+   * // Object syntax with custom alias
+   * const users = await query('users')
+   *   .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].total_spent = 15000
+   */
+  withSum(relatedTable, foreignKey, localKey, column, callback = null) {
+    let table, columnAlias;
+    
+    // Check if relatedTable is a string (shorthand) or object (explicit mapping)
+    if (typeof relatedTable === 'string') {
+      table = relatedTable;
+      columnAlias = `${table}_${column}_sum`;
+    } else {
+      // Object mapping: extract table and alias
+      table = Object.keys(relatedTable)[0];
+      columnAlias = relatedTable[table];
+    }
+    
+    this.query.aggregates.push({
+      type: 'SUM',
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column,
+      alias: columnAlias,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Add COUNT aggregate for related table
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string} foreignKey - Foreign key in related table
+   * @param {string} localKey - Local key in current table
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Standard syntax - auto alias
+   * const users = await query('users')
+   *   .withCount('transactions', 'user_id', 'id')
+   *   .get();
+   * // users[0].transactions_count = 5
+   * 
+   * @example
+   * // Object syntax with custom alias
+   * const users = await query('users')
+   *   .withCount({'transactions': 'total_transactions'}, 'user_id', 'id', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].total_transactions = 5
+   */
+  withCount(relatedTable, foreignKey, localKey, callback = null) {
+    let table, columnAlias;
+    
+    // Check if relatedTable is a string (shorthand) or object (explicit mapping)
+    if (typeof relatedTable === 'string') {
+      table = relatedTable;
+      columnAlias = `${table}_count`;
+    } else {
+      // Object mapping: extract table and alias
+      table = Object.keys(relatedTable)[0];
+      columnAlias = relatedTable[table];
+    }
+    
+    this.query.aggregates.push({
+      type: 'COUNT',
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column: '*',
+      alias: columnAlias,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Add AVG aggregate for related table
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string} foreignKey - Foreign key in related table
+   * @param {string} localKey - Local key in current table
+   * @param {string} column - Column to average
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Standard syntax - auto alias
+   * const users = await query('users')
+   *   .withAvg('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_avg = 3000
+   * 
+   * @example
+   * // Object syntax with custom alias
+   * const users = await query('users')
+   *   .withAvg({'transactions': 'avg_amount'}, 'user_id', 'id', 'amount', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].avg_amount = 3000
+   */
+  withAvg(relatedTable, foreignKey, localKey, column, callback = null) {
+    let table, columnAlias;
+    
+    // Check if relatedTable is a string (shorthand) or object (explicit mapping)
+    if (typeof relatedTable === 'string') {
+      table = relatedTable;
+      columnAlias = `${table}_${column}_avg`;
+    } else {
+      // Object mapping: extract table and alias
+      table = Object.keys(relatedTable)[0];
+      columnAlias = relatedTable[table];
+    }
+    
+    this.query.aggregates.push({
+      type: 'AVG',
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column,
+      alias: columnAlias,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Add MAX aggregate for related table
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string} foreignKey - Foreign key in related table
+   * @param {string} localKey - Local key in current table
+   * @param {string} column - Column to get maximum value
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Standard syntax - auto alias
+   * const users = await query('users')
+   *   .withMax('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_max = 10000
+   * 
+   * @example
+   * // Object syntax with custom alias
+   * const users = await query('users')
+   *   .withMax({'transactions': 'largest_transaction'}, 'user_id', 'id', 'amount', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].largest_transaction = 10000
+   */
+  withMax(relatedTable, foreignKey, localKey, column, callback = null) {
+    let table, columnAlias;
+    
+    // Check if relatedTable is a string (shorthand) or object (explicit mapping)
+    if (typeof relatedTable === 'string') {
+      table = relatedTable;
+      columnAlias = `${table}_${column}_max`;
+    } else {
+      // Object mapping: extract table and alias
+      table = Object.keys(relatedTable)[0];
+      columnAlias = relatedTable[table];
+    }
+    
+    this.query.aggregates.push({
+      type: 'MAX',
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column,
+      alias: columnAlias,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Add MIN aggregate for related table
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string} foreignKey - Foreign key in related table
+   * @param {string} localKey - Local key in current table
+   * @param {string} column - Column to get minimum value
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Standard syntax - auto alias
+   * const users = await query('users')
+   *   .withMin('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_min = 100
+   * 
+   * @example
+   * // Object syntax with custom alias
+   * const users = await query('users')
+   *   .withMin({'transactions': 'smallest_transaction'}, 'user_id', 'id', 'amount', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].smallest_transaction = 100
+   */
+  withMin(relatedTable, foreignKey, localKey, column, callback = null) {
+    let table, columnAlias;
+    
+    // Check if relatedTable is a string (shorthand) or object (explicit mapping)
+    if (typeof relatedTable === 'string') {
+      table = relatedTable;
+      columnAlias = `${table}_${column}_min`;
+    } else {
+      // Object mapping: extract table and alias
+      table = Object.keys(relatedTable)[0];
+      columnAlias = relatedTable[table];
+    }
+    
+    this.query.aggregates.push({
+      type: 'MIN',
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column,
+      alias: columnAlias,
       callback
     });
     return this;
@@ -688,6 +1016,20 @@ class QueryBuilder {
         sql += isNegated ? `NOT EXISTS (${subSql})` : `EXISTS (${subSql})`;
         // Add subquery parameters to main parameters array
         this.parameters.push(...condition.subQuery.parameters);
+      } else if (condition.type === 'AGGREGATE_SUBQUERY') {
+        // Add AND/OR if this is not the first condition in current group
+        if (conditionsInGroup[groupLevel] > 0) {
+          sql += condition.logicType === 'OR' ? ' OR ' : ' AND ';
+        }
+        conditionsInGroup[groupLevel]++;
+
+        // Build the aggregate subquery
+        const subSql = condition.subQuery.buildSql();
+        sql += `(${subSql}) ${condition.operator} ?`;
+        // Add subquery parameters to main parameters array
+        this.parameters.push(...condition.subQuery.parameters);
+        // Add comparison value
+        this.parameters.push(condition.value);
       } else {
         // Regular condition
         // Add AND/OR if this is not the first condition in current group
@@ -748,7 +1090,38 @@ class QueryBuilder {
 
     switch (this.query.type) {
       case 'SELECT':
-        sql = `SELECT ${this.query.distinct ? 'DISTINCT ' : ''}${this.query.select} FROM ${this.query.table}`;
+        let selectClause = this.query.select;
+        
+        // Add aggregate subqueries if any
+        if (this.query.aggregates.length > 0) {
+          const aggregateSelects = this.query.aggregates.map(agg => {
+            // Build subquery for aggregate
+            const subQuery = new QueryBuilder();
+            subQuery.from(agg.relatedTable);
+            subQuery.where(`${agg.relatedTable}.${agg.foreignKey}`, new RawSql(`${this.query.table}.${agg.localKey}`));
+            
+            // Apply callback if provided
+            if (agg.callback && typeof agg.callback === 'function') {
+              agg.callback(subQuery);
+            }
+            
+            // Build aggregate function
+            const aggFunc = agg.type === 'COUNT' ? 'COUNT(*)' : `${agg.type}(${agg.column})`;
+            subQuery.query.select = aggFunc;
+            subQuery.query.type = 'SELECT';
+            
+            const subSql = subQuery.buildSql();
+            this.parameters.push(...subQuery.parameters);
+            
+            return `(${subSql}) as ${agg.alias}`;
+          });
+          
+          selectClause = selectClause === '*' 
+            ? `${this.query.table}.*, ${aggregateSelects.join(', ')}`
+            : `${selectClause}, ${aggregateSelects.join(', ')}`;
+        }
+        
+        sql = `SELECT ${this.query.distinct ? 'DISTINCT ' : ''}${selectClause} FROM ${this.query.table}`;
 
         // JOINs
         this.query.joins.forEach(join => {
@@ -818,6 +1191,19 @@ class QueryBuilder {
     const sql = this.buildSql();
     const result = await db.query(sql, this.parameters);
     let rows = result.rows;
+    
+    // Convert aggregate results to numbers (MySQL returns strings for aggregates)
+    if (this.query.aggregates.length > 0 && rows.length > 0) {
+      rows = rows.map(row => {
+        const newRow = { ...row };
+        this.query.aggregates.forEach(agg => {
+          if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
+            newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
+          }
+        });
+        return newRow;
+      });
+    }
     
     // Process eager loaded relationships (two-query approach like Laravel)
     if (this.query.with.length > 0 && rows.length > 0) {

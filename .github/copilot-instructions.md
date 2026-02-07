@@ -331,6 +331,101 @@ const usersComplete = await query('users')
 // users[0].profiles = {...} (single object)
 // users[0].transactions = [{...}, {...}] (array)
 
+// Aggregate Functions - Add calculated columns without loading full related records
+// withSum - Sum of related column (auto alias: table_column_sum)
+const usersWithAutoSum = await query('users')
+  .withSum('transactions', 'user_id', 'id', 'amount')
+  .get();
+// users[0].transactions_amount_sum = 15000
+
+// withSum - Custom alias using object syntax
+const usersWithCustomSum = await query('users')
+  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+    q.where('status', 'completed');
+  })
+  .get();
+// users[0].total_spent = 15000
+
+// withCount - Count related records (auto alias: table_count)
+const usersWithCount = await query('users')
+  .withCount('transactions', 'user_id', 'id')
+  .get();
+// users[0].transactions_count = 5
+
+// withAvg, withMax, withMin - Similar patterns
+const usersWithStats = await query('users')
+  .withAvg('transactions', 'user_id', 'id', 'amount')      // users[0].transactions_amount_avg
+  .withMax('transactions', 'user_id', 'id', 'amount')      // users[0].transactions_amount_max
+  .withMin('transactions', 'user_id', 'id', 'amount')      // users[0].transactions_amount_min
+  .get();
+
+// Multiple aggregates with conditions
+const userStats = await query('users')
+  .withCount({'transactions': 'total_transactions'}, 'user_id', 'id')
+  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+    q.where('status', 'completed');
+  })
+  .withAvg({'reviews': 'avg_rating'}, 'user_id', 'id', 'rating')
+  .where('users.status', 'active')
+  .get();
+// userStats[0] = { id: 1, name: 'John', total_transactions: 10, total_spent: 15000, avg_rating: 4.5 }
+
+// Filter by Aggregate Values - where() auto-detects aggregate aliases
+// Just use normal where() - it automatically generates subquery if column matches aggregate alias!
+const highSpenders = await query('users')
+  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount')
+  .where('total_spent', '>', 10000)
+  .get();
+// WHERE (SELECT SUM(amount) FROM transactions WHERE transactions.user_id = users.id) > 10000
+
+const activeUsers = await query('users')
+  .withCount('transactions', 'user_id', 'id')
+  .where('transactions_count', '>=', 5)
+  .get();
+// WHERE (SELECT COUNT(*) FROM transactions WHERE transactions.user_id = users.id) >= 5
+
+// Combine multiple aggregate filters - all auto-detected!
+const vipUsers = await query('users')
+  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+    q.where('status', 'completed');
+    q.where('created_at', '>', '2025-01-01');
+  })
+  .withCount({'transactions': 'total_count'}, 'user_id', 'id')
+  .where('total_spent', '>', 50000)     // Auto-detected as aggregate
+  .where('total_count', '>=', 10)       // Auto-detected as aggregate
+  .get();
+// Filter VIP users with >50k in completed transactions since 2025 AND at least 10 transactions
+
+// Mix with normal WHERE conditions
+const premiumActiveUsers = await query('users')
+  .withAvg({'transactions': 'avg_amount'}, 'user_id', 'id', 'amount')
+  .where('status', 'active')            // Normal column
+  .where('avg_amount', '>', 500)        // Auto-detected as aggregate
+  .orWhere('role', 'vip')               // Normal column
+  .get();
+  .get();
+// WHERE (SELECT COUNT(*) FROM transactions WHERE transactions.user_id = users.id) >= 5
+
+// Combine multiple aggregate filters
+const vipUsers = await query('users')
+  .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+    q.where('status', 'completed');
+    q.where('created_at', '>', '2025-01-01');
+  })
+  .withCount({'transactions': 'total_count'}, 'user_id', 'id')
+  .where('total_spent', '>', 50000)
+  .where('total_count', '>=', 10)
+  .get();
+// Filter VIP users with >50k in completed transactions since 2025 AND at least 10 transactions
+
+// Mix with normal WHERE conditions
+const premiumActiveUsers = await query('users')
+  .withAvg({'transactions': 'avg_amount'}, 'user_id', 'id', 'amount')
+  .where('status', 'active')
+  .where('avg_amount', '>', 500)
+  .orWhere('role', 'vip')
+  .get();
+
 // EXISTS subqueries for filtering based on related records
 const usersWithCompletedTransactions = await query('users')
   .whereExistsRelation('transactions', 'user_id', 'id', function(q) {
@@ -391,8 +486,8 @@ Available methods:
 - `select(columns)` - Specify columns to select
 - `distinct()` - Add DISTINCT to query
 - `from(table)` - Specify table (can also pass to query() function)
-- `where(column, operator, value)` - Add WHERE condition
-- `orWhere(column, operator, value)` - Add OR WHERE condition
+- `where(column, operator, value)` - Add WHERE condition (auto-detects aggregate aliases)
+- `orWhere(column, operator, value)` - Add OR WHERE condition (auto-detects aggregate aliases)
 - `whereIn(column, values)` - WHERE IN condition
 - `whereNotIn(column, values)` - WHERE NOT IN condition
 - `whereExistsRelation(table, foreignKey, localKey, callback)` - WHERE EXISTS subquery with relation
@@ -405,6 +500,16 @@ Available methods:
 - `withMany({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-many (custom property name)
 - `withOne('table', foreignKey, localKey, callback)` - Eager load has-one (shorthand: table = property name)
 - `withOne({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-one (custom property name)
+- `withSum('table', foreignKey, localKey, column, callback)` - Add SUM aggregate (auto alias: table_column_sum)
+- `withSum({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add SUM aggregate (custom alias)
+- `withCount('table', foreignKey, localKey, callback)` - Add COUNT aggregate (auto alias: table_count)
+- `withCount({'table': 'alias'}, foreignKey, localKey, callback)` - Add COUNT aggregate (custom alias)
+- `withAvg('table', foreignKey, localKey, column, callback)` - Add AVG aggregate (auto alias: table_column_avg)
+- `withAvg({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add AVG aggregate (custom alias)
+- `withMax('table', foreignKey, localKey, column, callback)` - Add MAX aggregate (auto alias: table_column_max)
+- `withMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MAX aggregate (custom alias)
+- `withMin('table', foreignKey, localKey, column, callback)` - Add MIN aggregate (auto alias: table_column_min)
+- `withMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MIN aggregate (custom alias)
 - `like(column, value, side)` - LIKE condition (side: 'both', 'before', 'after')
 - `orLike(column, value, side)` - OR LIKE condition
 - `search(columns, value, side)` - Search multiple columns with AND logic (side: 'both', 'before', 'after')
