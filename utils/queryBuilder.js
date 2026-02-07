@@ -2,10 +2,25 @@ const db = require('./database');
 
 /**
  * RawSql class - Marks SQL values that should not be parameterized
- * Used for column references and raw SQL expressions
+ * 
+ * ⚠️ SECURITY WARNING: NEVER use with user input!
+ * RawSql bypasses SQL injection protection. Only use with:
+ * - Column references (e.g., new RawSql('table.column'))
+ * - Trusted SQL expressions from your code
+ * - Never with any user-controlled data
+ * 
+ * @example
+ * // SAFE - column reference
+ * query('users').where('created_at', new RawSql('updated_at'))
+ * 
+ * // DANGEROUS - user input
+ * query('users').where('id', new RawSql(userInput)) // ❌ NEVER DO THIS!
  */
 class RawSql {
   constructor(value) {
+    if (typeof value !== 'string') {
+      throw new TypeError('RawSql value must be a string');
+    }
     this.value = value;
   }
 }
@@ -101,6 +116,13 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   from(table) {
+    if (typeof table !== 'string' || table.trim().length === 0) {
+      throw new Error('Table name must be a non-empty string');
+    }
+    // Validate table name format (alphanumeric, dots, underscores, backticks only)
+    if (!/^[a-zA-Z0-9_.`]+$/.test(table)) {
+      throw new Error('Invalid table name format');
+    }
     this.#query.table = table;
     return this;
   }
@@ -124,10 +146,20 @@ class QueryBuilder {
    *   .get();
    */
   where(column, operator = null, value = null) {
+    if (typeof column !== 'string') {
+      throw new TypeError('Column name must be a string');
+    }
+
     if (value === null && operator !== null) {
       // where('column', 'value')
       value = operator;
       operator = '=';
+    }
+
+    // Validate operator
+    const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT'];
+    if (!validOperators.includes(operator)) {
+      throw new Error(`Invalid operator: ${operator}`);
     }
 
     // Check if column matches any aggregate alias
@@ -162,9 +194,19 @@ class QueryBuilder {
    *   .get();
    */
   orWhere(column, operator = null, value = null) {
+    if (typeof column !== 'string') {
+      throw new TypeError('Column name must be a string');
+    }
+
     if (value === null && operator !== null) {
       value = operator;
       operator = '=';
+    }
+
+    // Validate operator
+    const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT'];
+    if (!validOperators.includes(operator)) {
+      throw new Error(`Invalid operator: ${operator}`);
     }
 
     // Check if column matches any aggregate alias
@@ -191,6 +233,14 @@ class QueryBuilder {
    * query('users').whereIn('id', [1, 2, 3]) // WHERE id IN (1, 2, 3)
    */
   whereIn(column, values) {
+    if (!Array.isArray(values)) {
+      throw new Error('whereIn() requires an array of values');
+    }
+    if (values.length === 0) {
+      // WHERE column IN () is invalid SQL - use FALSE condition (1 = 0)
+      this.#query.where.push({ column: '1', operator: '=', value: 0, type: 'AND' });
+      return this;
+    }
     this.#query.where.push({ column, operator: 'IN', value: values, type: 'AND' });
     return this;
   }
@@ -202,6 +252,13 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   whereNotIn(column, values) {
+    if (!Array.isArray(values)) {
+      throw new Error('whereNotIn() requires an array of values');
+    }
+    if (values.length === 0) {
+      // WHERE column NOT IN () is always true - skip condition
+      return this;
+    }
     this.#query.where.push({ column, operator: 'NOT IN', value: values, type: 'AND' });
     return this;
   }
@@ -737,6 +794,19 @@ class QueryBuilder {
   }
 
   /**
+   * Escape special LIKE characters
+   * @private
+   * @param {string} value - Value to escape
+   * @returns {string} Escaped value
+   */
+  #escapeLikePattern(value) {
+    return String(value)
+      .replace(/\\/g, '\\\\')
+      .replace(/%/g, '\\%')
+      .replace(/_/g, '\\_');
+  }
+
+  /**
    * Create LIKE pattern for search operations
    * @private
    * @param {string} value - Search value
@@ -744,9 +814,10 @@ class QueryBuilder {
    * @returns {string} LIKE pattern
    */
   #createLikePattern(value, side) {
-    if (side === 'before') return `%${value}`;
-    if (side === 'after') return `${value}%`;
-    return `%${value}%`;
+    const escaped = this.#escapeLikePattern(value);
+    if (side === 'before') return `%${escaped}`;
+    if (side === 'after') return `${escaped}%`;
+    return `%${escaped}%`;
   }
 
   /**
@@ -871,7 +942,16 @@ class QueryBuilder {
    * query('users').select(['status', 'COUNT(*) as count']).groupBy('status')
    */
   groupBy(columns) {
-    this.#query.groupBy = Array.isArray(columns) ? columns : [columns];
+    const colArray = Array.isArray(columns) ? columns : [columns];
+    
+    // Validate each column name
+    colArray.forEach(col => {
+      if (typeof col !== 'string' || !/^[a-zA-Z0-9_.`]+$/.test(col)) {
+        throw new Error(`Invalid GROUP BY column: ${col}`);
+      }
+    });
+    
+    this.#query.groupBy = colArray;
     return this;
   }
 
@@ -902,7 +982,19 @@ class QueryBuilder {
    * query('users').orderBy('created_at', 'DESC').orderBy('name', 'ASC')
    */
   orderBy(column, direction = 'ASC') {
-    this.#query.orderBy.push({ column, direction });
+    // Validate column name (alphanumeric, dots, underscores, backticks only)
+    if (typeof column !== 'string' || !/^[a-zA-Z0-9_.`]+$/.test(column)) {
+      throw new Error('Invalid ORDER BY column name');
+    }
+    
+    // Validate direction
+    const validDirections = ['ASC', 'DESC'];
+    const upperDirection = String(direction).toUpperCase();
+    if (!validDirections.includes(upperDirection)) {
+      throw new Error('ORDER BY direction must be ASC or DESC');
+    }
+    
+    this.#query.orderBy.push({ column, direction: upperDirection });
     return this;
   }
 
@@ -912,7 +1004,11 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   limit(value) {
-    this.#query.limit = value;
+    const numValue = parseInt(value, 10);
+    if (!Number.isInteger(numValue) || numValue < 0) {
+      throw new Error('LIMIT must be a non-negative integer');
+    }
+    this.#query.limit = numValue;
     return this;
   }
 
@@ -922,7 +1018,11 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   offset(value) {
-    this.#query.offset = value;
+    const numValue = parseInt(value, 10);
+    if (!Number.isInteger(numValue) || numValue < 0) {
+      throw new Error('OFFSET must be a non-negative integer');
+    }
+    this.#query.offset = numValue;
     return this;
   }
 
@@ -936,9 +1036,9 @@ class QueryBuilder {
    */
   insert(data) {
     this.#query.type = 'INSERT';
-    this.#query.table = data.table || this.#query.table;
-    this.#query.set = data;
-    delete data.table;
+    const { table, ...insertData } = data;
+    if (table) this.#query.table = table;
+    this.#query.set = insertData;
     return this;
   }
 
@@ -952,9 +1052,9 @@ class QueryBuilder {
    */
   update(data) {
     this.#query.type = 'UPDATE';
-    this.#query.table = data.table || this.#query.table;
-    this.#query.set = data;
-    delete data.table;
+    const { table, ...updateData } = data;
+    if (table) this.#query.table = table;
+    this.#query.set = updateData;
     return this;
   }
 
@@ -1087,6 +1187,11 @@ class QueryBuilder {
    * @returns {string} Complete SQL query
    */
   buildSql() {
+    // Validate table is set
+    if (!this.#query.table) {
+      throw new Error('Table name is required. Use from() or query(tableName)');
+    }
+
     // If no type is set, default to SELECT
     if (!this.#query.type) {
       this.#query.type = 'SELECT';
