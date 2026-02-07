@@ -44,11 +44,13 @@ class QueryBuilder {
   // Private fields
   #query;
   #parameters;
+  #executor;
 
   /**
    * Creates a new QueryBuilder instance
    */
-  constructor() {
+  constructor(executor = db) {
+    this.#executor = executor;
     this.#reset();
   }
 
@@ -71,6 +73,7 @@ class QueryBuilder {
       offset: null,
       set: null,
       values: null,
+      upsertUpdate: null,
       with: [],
       aggregates: [],
       autoAddedColumns: [] // Track columns auto-added for relationships
@@ -748,7 +751,7 @@ class QueryBuilder {
    * @returns {object} WHERE condition object with aggregate subquery
    */
   #buildAggregateSubquery(aggregate, operator, value, logicType) {
-    const subQuery = new QueryBuilder();
+    const subQuery = new QueryBuilder(this.#executor);
     subQuery.from(aggregate.relatedTable);
 
     // Handle composite keys (arrays) or single key
@@ -799,7 +802,7 @@ class QueryBuilder {
    * @returns {object} WHERE condition object with EXISTS subquery
    */
   #buildExistsSubquery(relatedTable, foreignKey, localKey, type, callback) {
-    const subQuery = new QueryBuilder();
+    const subQuery = new QueryBuilder(this.#executor);
     subQuery.select('1').from(relatedTable);
     
     // Handle composite keys (arrays) or single key
@@ -1339,6 +1342,40 @@ class QueryBuilder {
   }
 
   /**
+   * Prepare UPSERT query (INSERT ... ON DUPLICATE KEY UPDATE)
+   * @param {object} data - Data to insert (column-value pairs)
+   * @param {object|null} [updateData=null] - Data to update on duplicate (defaults to data)
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users')
+   *   .upsert({ id: 1, username: 'john', email: 'john@example.com' }, { email: 'new@example.com' })
+   *   .execute();
+   */
+  upsert(data, updateData = null) {
+    if (!data || typeof data !== 'object') {
+      throw new Error('upsert() requires a data object');
+    }
+
+    this.#query.type = 'UPSERT';
+    const { table, ...insertData } = data;
+    if (table) this.#query.table = table;
+
+    if (Object.keys(insertData).length === 0) {
+      throw new Error('upsert() requires insert data');
+    }
+
+    const updates = updateData === null ? insertData : updateData;
+    if (!updates || typeof updates !== 'object' || Object.keys(updates).length === 0) {
+      throw new Error('upsert() requires update data');
+    }
+
+    this.#query.set = insertData;
+    this.#query.upsertUpdate = updates;
+    return this;
+  }
+
+  /**
    * Prepare DELETE query
    * @param {string} [table] - Optional table name override
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -1520,7 +1557,7 @@ class QueryBuilder {
         if (this.#query.aggregates.length > 0) {
           const aggregateSelects = this.#query.aggregates.map(agg => {
             // Build subquery for aggregate
-            const subQuery = new QueryBuilder();
+            const subQuery = new QueryBuilder(this.#executor);
             subQuery.from(agg.relatedTable);
 
             // Handle composite keys (arrays) or single key
@@ -1610,6 +1647,34 @@ class QueryBuilder {
         sql += this.buildWhere();
         break;
 
+      case 'UPSERT':
+        const upsertColumns = Object.keys(this.#query.set);
+        const upsertPlaceholders = upsertColumns.map(() => '?').join(', ');
+        const updateColumns = Object.keys(this.#query.upsertUpdate || {});
+
+        if (updateColumns.length === 0) {
+          throw new Error('upsert() requires update data');
+        }
+
+        sql = `INSERT INTO ${this.#query.table} (${upsertColumns.join(', ')}) VALUES (${upsertPlaceholders})`;
+        const updateClauses = updateColumns.map(col => {
+          const value = this.#query.upsertUpdate[col];
+          if (value instanceof RawSql) {
+            return `${col} = ${value.value}`;
+          }
+          return `${col} = ?`;
+        });
+        sql += ` ON DUPLICATE KEY UPDATE ${updateClauses.join(', ')}`;
+
+        this.#parameters = upsertColumns.map(col => this.#query.set[col]);
+        updateColumns.forEach(col => {
+          const value = this.#query.upsertUpdate[col];
+          if (!(value instanceof RawSql)) {
+            this.#parameters.push(value);
+          }
+        });
+        break;
+
       case 'DELETE':
         sql = `DELETE FROM ${this.#query.table}`;
         sql += this.buildWhere();
@@ -1629,7 +1694,7 @@ class QueryBuilder {
    */
   async get() {
     const sql = this.buildSql();
-    const result = await db.query(sql, this.#parameters);
+    const result = await this.#executor.query(sql, this.#parameters);
     let rows = result.rows;
 
     // Convert aggregate results to numbers (MySQL returns strings for aggregates)
@@ -1718,7 +1783,7 @@ class QueryBuilder {
 
         // Execute query (without eager loading to keep memory efficient)
         const sql = this.buildSql();
-        const result = await db.query(sql, this.#parameters);
+        const result = await this.#executor.query(sql, this.#parameters);
         const rows = result.rows;
 
         // No more rows, we're done
@@ -1835,7 +1900,7 @@ class QueryBuilder {
 
         // Execute query (without eager loading to keep memory efficient)
         const sql = this.buildSql();
-        const result = await db.query(sql, this.#parameters);
+        const result = await this.#executor.query(sql, this.#parameters);
         const rows = result.rows;
 
         // No more rows, we're done
@@ -1910,7 +1975,7 @@ class QueryBuilder {
         }
 
         // Build query for related records with composite key matching
-        const relatedQuery = new QueryBuilder();
+        const relatedQuery = new QueryBuilder(this.#executor);
         relatedQuery.from(relation.relatedTable);
 
         // Build WHERE clause for composite keys using tuple matching
@@ -1954,7 +2019,7 @@ class QueryBuilder {
 
         // Fetch related records
         const relatedSql = relatedQuery.buildSql();
-        const relatedResult = await db.query(relatedSql, relatedQuery.#parameters);
+        const relatedResult = await this.#executor.query(relatedSql, relatedQuery.#parameters);
         let relatedRecords = relatedResult.rows;
 
         // Process nested relations if any were defined in the callback
@@ -2032,7 +2097,7 @@ class QueryBuilder {
         }
 
         // Build query for related records
-        const relatedQuery = new QueryBuilder();
+        const relatedQuery = new QueryBuilder(this.#executor);
         relatedQuery.from(relation.relatedTable);
         relatedQuery.whereIn(relation.foreignKey, localKeyValues);
 
@@ -2060,7 +2125,7 @@ class QueryBuilder {
 
         // Fetch related records
         const relatedSql = relatedQuery.buildSql();
-        const relatedResult = await db.query(relatedSql, relatedQuery.#parameters);
+        const relatedResult = await this.#executor.query(relatedSql, relatedQuery.#parameters);
         let relatedRecords = relatedResult.rows;
 
         // Process nested relations if any were defined in the callback
@@ -2189,10 +2254,10 @@ class QueryBuilder {
     const sql = this.buildSql();
     let result;
 
-    if (this.#query.type === 'INSERT') {
-      result = await db.insert(sql, this.#parameters);
+    if (this.#query.type === 'INSERT' || this.#query.type === 'UPSERT') {
+      result = await this.#executor.insert(sql, this.#parameters);
     } else if (this.#query.type === 'UPDATE' || this.#query.type === 'DELETE') {
-      result = await db.update(sql, this.#parameters);
+      result = await this.#executor.update(sql, this.#parameters);
     }
 
     this.#reset();
@@ -2240,4 +2305,54 @@ function query(table = null) {
   return qb;
 }
 
-module.exports = { QueryBuilder, query, RawSql };
+function createExecutor(connection) {
+  return {
+    query: async (sql, params = []) => {
+      const [rows, fields] = await connection.execute(sql, params);
+      return { rows, fields };
+    },
+    insert: async (sql, params = []) => {
+      const [result] = await connection.execute(sql, params);
+      return result.insertId;
+    },
+    update: async (sql, params = []) => {
+      const [result] = await connection.execute(sql, params);
+      return result.affectedRows;
+    }
+  };
+}
+
+/**
+ * Run multiple queries in a single transaction.
+ * Rolls back on any thrown error (query errors or JavaScript errors).
+ *
+ * @param {function} callback - Async function that receives trx() query factory
+ * @returns {Promise<any>} Result returned by callback
+ *
+ * @example
+ * const { transaction } = require('./queryBuilder');
+ *
+ * await transaction(async (trx) => {
+ *   const userId = await trx('users')
+ *     .insert({ username: 'alice', email: 'a@b.com', password_hash: 'x' })
+ *     .execute();
+ *
+ *   await trx('transactions')
+ *     .insert({ user_id: userId, total_amount: 100, status: 'pending' })
+ *     .execute();
+ * });
+ */
+async function transaction(callback) {
+  return db.transaction(async (connection) => {
+    const executor = createExecutor(connection);
+    const trxQuery = (table = null) => {
+      const qb = new QueryBuilder(executor);
+      if (table) qb.from(table);
+      return qb;
+    };
+
+    return callback(trxQuery);
+  });
+}
+
+module.exports = { QueryBuilder, query, transaction, RawSql };

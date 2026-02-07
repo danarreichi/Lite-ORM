@@ -1,4 +1,4 @@
-const { query, RawSql } = require('../utils/queryBuilder');
+const { query, transaction, RawSql } = require('../utils/queryBuilder');
 const { dd } = require('../utils/debug');
 
 /**
@@ -543,6 +543,40 @@ async function testUpdate() {
   await query('users').delete().where('id', insertId).execute();
 }
 
+console.log('\n⬆️ UPSERT QUERIES\n');
+
+async function testUpsertUpdatesExisting() {
+  const user = await query('users').where('username', 'john_doe').first();
+  if (!user) {
+    assert(false, 'UPSERT: Requires existing user');
+    return;
+  }
+
+  const originalFirstName = user.first_name;
+  const newFirstName = `Upsert_${Date.now()}`;
+
+  await query('users')
+    .upsert({
+      id: user.id,
+      username: user.username,
+      email: user.email,
+      password_hash: user.password_hash,
+      first_name: newFirstName,
+      last_name: user.last_name
+    }, {
+      first_name: newFirstName
+    })
+    .execute();
+
+  const updated = await query('users').where('id', user.id).first();
+  assertEquals(updated.first_name, newFirstName, 'UPSERT: Updates existing record');
+
+  await query('users')
+    .update({ first_name: originalFirstName })
+    .where('id', user.id)
+    .execute();
+}
+
 console.log('\n🗑️ DELETE QUERIES\n');
 
 async function testDelete() {
@@ -566,6 +600,37 @@ async function testDelete() {
   // Verify
   const deleted = await query('users').where('id', insertId).first();
   assert(deleted === null, 'DELETE: User deleted correctly');
+}
+
+console.log('\n🔒 TRANSACTIONS\n');
+
+async function testTransactionRollbackOnJsError() {
+  const username = 'trx_rollback_' + Date.now();
+  const email = `trx${Date.now()}@example.com`;
+  let errorCaught = false;
+
+  try {
+    await transaction(async (trx) => {
+      await trx('users').insert({
+        username,
+        email,
+        password_hash: '$2b$10$testhash'
+      }).execute();
+
+      // Trigger ReferenceError to force rollback
+      undefinedVariable += 1;
+    });
+  } catch (error) {
+    errorCaught = true;
+  }
+
+  assert(errorCaught, 'Transaction: Throws on JS error');
+
+  const user = await query('users').where('username', username).first();
+  if (user) {
+    await query('users').delete().where('id', user.id).execute();
+  }
+  assert(user === null, 'Transaction: Rolled back on JS error');
 }
 
 console.log('\n🔢 UTILITY METHODS\n');
@@ -758,7 +823,11 @@ async function runAllTests() {
     // INSERT, UPDATE, DELETE
     await testInsert();
     await testUpdate();
+    await testUpsertUpdatesExisting();
     await testDelete();
+
+    // Transactions
+    await testTransactionRollbackOnJsError();
     
     // Utility methods
     await testFirst();

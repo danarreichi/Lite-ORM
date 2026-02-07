@@ -6,7 +6,7 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "seed": "node seeder.js",
-    "test": "node tests/queryBuilder.test.js"
+    "test": "node tests/runAll.js"
   },
   "keywords": [],
   "author": "",
