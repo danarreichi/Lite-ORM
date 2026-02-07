@@ -177,6 +177,36 @@ query('users')
      .where('created_at', '>', '2024-01-01');
   })
 // WHERE (status = 'active' AND role = 'admin') OR (status = 'pending' AND created_at > '2024-01-01')
+
+// Nested groups (group inside group)
+query('users')
+  .group(function(outer) {
+    outer.where('first_name', 'John')
+      .orGroup(function(inner) {
+        inner.where('last_name', 'Doe')
+             .where('age', '>', 18);
+      });
+  })
+  .where('status', 'active')
+// WHERE (first_name = 'John' OR (last_name = 'Doe' AND age > 18)) AND status = 'active'
+
+// Deep nesting (4+ levels)
+query('products')
+  .group(function(l1) {
+    l1.where('category_id', 1)
+      .orGroup(function(l2) {
+        l2.where('price', '<', 100)
+          .group(function(l3) {
+            l3.where('stock', '>', 0)
+              .orGroup(function(l4) {
+                l4.where('featured', true)
+                  .where('discount', '>', 0);
+              });
+          });
+      });
+  })
+  .where('active', 1)
+// Complex nested query
 ```
 
 ## Joins

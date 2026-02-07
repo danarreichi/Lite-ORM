@@ -24,6 +24,7 @@ npm test
 node tests/queryBuilder.test.js
 node tests/queryBuilder-composite-whereHas.test.js
 node tests/queryBuilder-has-callback.test.js
+node tests/queryBuilder-nested-group.test.js
 ```
 
 ## Test Coverage
@@ -145,6 +146,14 @@ Tests for `has()` method with callback support:
 - Composite keys with callbacks
 - Complex nested conditions in callbacks
 - Multiple `has()` calls with different callbacks
+
+### `queryBuilder-nested-group.test.js`
+Integration tests for nested group logic with seeded data:
+- Group inside group (nested parentheses)
+- Multiple OR groups at same level
+- Deep nesting (4 levels)
+- Nested groups with joins and eager loading
+- Nested groups combined with `whereHas()`
 
 ## Test Data
 

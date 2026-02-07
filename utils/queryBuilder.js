@@ -287,6 +287,32 @@ class QueryBuilder {
   }
 
   /**
+   * Start a grouped condition with OR logic (callback-based)
+   * @param {function} callback - Function that receives the QueryBuilder instance
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   * @throws {Error} If callback is not a function
+   *
+   * @example
+   * query('users')
+   *   .orGroup(q => {
+   *     q.where('status', 'active').where('role', 'admin');
+   *   })
+   *   .orGroup(q => {
+   *     q.where('status', 'pending').where('created_at', '>', '2024-01-01');
+   *   })
+   * // WHERE (status = 'active' AND role = 'admin') OR (status = 'pending' AND created_at > '2024-01-01')
+   */
+  orGroup(callback) {
+    if (typeof callback !== 'function') {
+      throw new Error('orGroup() requires a callback function');
+    }
+    this.#query.where.push({ type: 'GROUP_START', groupType: 'OR' });
+    callback(this);
+    this.#query.where.push({ type: 'GROUP_END' });
+    return this;
+  }
+
+  /**
    * Add WHERE EXISTS subquery with relation
    * @param {string} relatedTable - The related table name
    * @param {string|string[]} foreignKey - Foreign key column(s) in related table (string or array for composite keys)

@@ -254,6 +254,18 @@ const orGroupUsers = await query('users')
   })
   .get();
 
+// Nested groups (group inside group)
+const nestedGroupUsers = await query('users')
+  .group(function(outer) {
+    outer.where('first_name', 'John')
+      .orGroup(function(inner) {
+        inner.where('last_name', 'Doe')
+             .where('id', '>', 0);
+      });
+  })
+  .where('email', 'LIKE', '%@example.com%')
+  .get();
+
 // LIKE queries
 const searchResults = await query('users')
   .like('name', 'John')
