@@ -115,6 +115,7 @@ function dd(...data) {
         .dd-key {
             color: #ff7b72;
             font-weight: 600;
+          cursor: pointer;
         }
         .dd-arrow {
             color: #8b949e;
@@ -220,6 +221,26 @@ function dd(...data) {
                 toggle.classList.toggle('collapsed');
             }
         }
+
+      // Allow clicking on keys to expand/collapse nested values
+      document.addEventListener('click', function(event) {
+        const key = event.target.closest('.dd-key');
+        if (!key) {
+          return;
+        }
+        const propertyRow = key.closest('.dd-property');
+        if (!propertyRow) {
+          return;
+        }
+        const toggle = propertyRow.querySelector('.dd-toggle');
+        if (!toggle || !toggle.id) {
+          return;
+        }
+        const id = toggle.id.replace('toggle-', '');
+        if (id !== '') {
+          toggleCollapse(id);
+        }
+      });
     </script>
 </body>
 </html>`;
