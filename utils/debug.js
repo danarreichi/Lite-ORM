@@ -468,7 +468,6 @@ function log(message, data = null) {
 
 module.exports = {
   dd,
-  dc,
   dump,
   pp,
   log

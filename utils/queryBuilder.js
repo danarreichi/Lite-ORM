@@ -26,19 +26,23 @@ class RawSql {
  *   .get();
  */
 class QueryBuilder {
+  // Private fields
+  #query;
+  #parameters;
+
   /**
    * Creates a new QueryBuilder instance
    */
   constructor() {
-    this.reset();
+    this.#reset();
   }
 
   /**
    * Reset query state to initial values
    * @private
    */
-  reset() {
-    this.query = {
+  #reset() {
+    this.#query = {
       type: null,
       table: null,
       select: '*',
@@ -55,7 +59,7 @@ class QueryBuilder {
       with: [],
       aggregates: []
     };
-    this.parameters = [];
+    this.#parameters = [];
     return this;
   }
 
@@ -69,12 +73,12 @@ class QueryBuilder {
    * query('users').select('COUNT(*) as total') // SELECT COUNT(*) as total FROM users
    */
   select(columns = '*') {
-    this.query.type = 'SELECT';
-    if (columns === '*' && this.query.aggregates.length > 0) {
+    this.#query.type = 'SELECT';
+    if (columns === '*' && this.#query.aggregates.length > 0) {
       // Keep '*' but we'll add aggregates in buildSql
-      this.query.select = columns;
+      this.#query.select = columns;
     } else {
-      this.query.select = Array.isArray(columns) ? columns.join(', ') : columns;
+      this.#query.select = Array.isArray(columns) ? columns.join(', ') : columns;
     }
     return this;
   }
@@ -87,7 +91,7 @@ class QueryBuilder {
    * query('users').distinct().select('email').get() // SELECT DISTINCT email FROM users
    */
   distinct() {
-    this.query.distinct = true;
+    this.#query.distinct = true;
     return this;
   }
 
@@ -97,7 +101,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   from(table) {
-    this.query.table = table;
+    this.#query.table = table;
     return this;
   }
 
@@ -127,14 +131,14 @@ class QueryBuilder {
     }
 
     // Check if column matches any aggregate alias
-    const aggregate = this.query.aggregates.find(agg => agg.alias === column);
+    const aggregate = this.#query.aggregates.find(agg => agg.alias === column);
 
     if (aggregate) {
       // Use helper to build aggregate subquery
-      this.query.where.push(this._buildAggregateSubquery(aggregate, operator, value, 'AND'));
+      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, value, 'AND'));
     } else {
       // Normal WHERE condition
-      this.query.where.push({ column, operator, value, type: 'AND' });
+      this.#query.where.push({ column, operator, value, type: 'AND' });
     }
 
     return this;
@@ -164,14 +168,14 @@ class QueryBuilder {
     }
 
     // Check if column matches any aggregate alias
-    const aggregate = this.query.aggregates.find(agg => agg.alias === column);
+    const aggregate = this.#query.aggregates.find(agg => agg.alias === column);
 
     if (aggregate) {
       // Use helper to build aggregate subquery
-      this.query.where.push(this._buildAggregateSubquery(aggregate, operator, value, 'OR'));
+      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, value, 'OR'));
     } else {
       // Normal OR WHERE condition
-      this.query.where.push({ column, operator, value, type: 'OR' });
+      this.#query.where.push({ column, operator, value, type: 'OR' });
     }
 
     return this;
@@ -187,7 +191,7 @@ class QueryBuilder {
    * query('users').whereIn('id', [1, 2, 3]) // WHERE id IN (1, 2, 3)
    */
   whereIn(column, values) {
-    this.query.where.push({ column, operator: 'IN', value: values, type: 'AND' });
+    this.#query.where.push({ column, operator: 'IN', value: values, type: 'AND' });
     return this;
   }
 
@@ -198,7 +202,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   whereNotIn(column, values) {
-    this.query.where.push({ column, operator: 'NOT IN', value: values, type: 'AND' });
+    this.#query.where.push({ column, operator: 'NOT IN', value: values, type: 'AND' });
     return this;
   }
 
@@ -218,9 +222,9 @@ class QueryBuilder {
     if (typeof callback !== 'function') {
       throw new Error('group() requires a callback function');
     }
-    this.query.where.push({ type: 'GROUP_START', groupType: 'AND' });
+    this.#query.where.push({ type: 'GROUP_START', groupType: 'AND' });
     callback(this);
-    this.query.where.push({ type: 'GROUP_END' });
+    this.#query.where.push({ type: 'GROUP_END' });
     return this;
   }
 
@@ -239,7 +243,7 @@ class QueryBuilder {
    * // WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed')
    */
   whereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
-    this.query.where.push(this._buildExistsSubquery(relatedTable, foreignKey, localKey, 'EXISTS', callback));
+    this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'EXISTS', callback));
     return this;
   }
 
@@ -256,7 +260,7 @@ class QueryBuilder {
    * // WHERE status = 'active' OR EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
    */
   orWhereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
-    this.query.where.push(this._buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_EXISTS', callback));
+    this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_EXISTS', callback));
     return this;
   }
 
@@ -273,7 +277,7 @@ class QueryBuilder {
    * // WHERE NOT EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id)
    */
   whereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
-    this.query.where.push(this._buildExistsSubquery(relatedTable, foreignKey, localKey, 'NOT_EXISTS', callback));
+    this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'NOT_EXISTS', callback));
     return this;
   }
 
@@ -290,7 +294,7 @@ class QueryBuilder {
    * // WHERE status = 'active' OR NOT EXISTS (SELECT 1 FROM banned_users WHERE banned_users.user_id = users.id)
    */
   orWhereNotExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
-    this.query.where.push(this._buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_NOT_EXISTS', callback));
+    this.#query.where.push(this.#buildExistsSubquery(relatedTable, foreignKey, localKey, 'OR_NOT_EXISTS', callback));
     return this;
   }
 
@@ -300,7 +304,7 @@ class QueryBuilder {
    * @param {string|object} relation - Table name or {table: name} mapping
    * @returns {{relatedTable: string, relationName: string}}
    */
-  _parseRelationName(relation) {
+  #parseRelationName(relation) {
     if (typeof relation === 'string') {
       return { relatedTable: relation, relationName: relation };
     } else {
@@ -344,9 +348,9 @@ class QueryBuilder {
    * // orders[0].order_items = [{...}, {...}]
    */
   withMany(relation, foreignKey, localKey = 'id', callback = null) {
-    const { relatedTable, relationName } = this._parseRelationName(relation);
+    const { relatedTable, relationName } = this.#parseRelationName(relation);
 
-    this.query.with.push({
+    this.#query.with.push({
       type: 'hasMany',
       relationName,
       relatedTable,
@@ -389,9 +393,9 @@ class QueryBuilder {
    * // transactions[0].transaction_details = {...}
    */
   withOne(relation, foreignKey, localKey = 'id', callback = null) {
-    const { relatedTable, relationName } = this._parseRelationName(relation);
+    const { relatedTable, relationName } = this.#parseRelationName(relation);
 
-    this.query.with.push({
+    this.#query.with.push({
       type: 'hasOne',
       relationName,
       relatedTable,
@@ -410,7 +414,7 @@ class QueryBuilder {
    * @param {string} aggregateType - SUM, COUNT, AVG, MAX, MIN
    * @returns {{table: string, alias: string}}
    */
-  _parseAggregateAlias(relatedTable, column, aggregateType) {
+  #parseAggregateAlias(relatedTable, column, aggregateType) {
     if (typeof relatedTable === 'string') {
       let alias;
       if (aggregateType === 'COUNT') {
@@ -435,7 +439,7 @@ class QueryBuilder {
    * @param {string} logicType - 'AND' or 'OR'
    * @returns {object} WHERE condition object with aggregate subquery
    */
-  _buildAggregateSubquery(aggregate, operator, value, logicType) {
+  #buildAggregateSubquery(aggregate, operator, value, logicType) {
     const subQuery = new QueryBuilder();
     subQuery.from(aggregate.relatedTable);
 
@@ -446,10 +450,10 @@ class QueryBuilder {
 
       // Add multiple WHERE conditions for composite keys
       foreignKeys.forEach((fk, i) => {
-        subQuery.where(`${aggregate.relatedTable}.${fk}`, new RawSql(`${this.query.table}.${localKeys[i]}`));
+        subQuery.where(`${aggregate.relatedTable}.${fk}`, new RawSql(`${this.#query.table}.${localKeys[i]}`));
       });
     } else {
-      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.query.table}.${aggregate.localKey}`));
+      subQuery.where(`${aggregate.relatedTable}.${aggregate.foreignKey}`, new RawSql(`${this.#query.table}.${aggregate.localKey}`));
     }
 
     // Apply callback if provided in aggregate definition
@@ -459,8 +463,8 @@ class QueryBuilder {
 
     // Build aggregate function
     const aggFunc = aggregate.type === 'COUNT' ? 'COUNT(*)' : `${aggregate.type}(${aggregate.column})`;
-    subQuery.query.select = aggFunc;
-    subQuery.query.type = 'SELECT';
+    subQuery.#query.select = aggFunc;
+    subQuery.#query.type = 'SELECT';
 
     return {
       type: 'AGGREGATE_SUBQUERY',
@@ -481,10 +485,10 @@ class QueryBuilder {
    * @param {function|null} callback - Optional callback for additional conditions
    * @returns {object} WHERE condition object with EXISTS subquery
    */
-  _buildExistsSubquery(relatedTable, foreignKey, localKey, type, callback) {
+  #buildExistsSubquery(relatedTable, foreignKey, localKey, type, callback) {
     const subQuery = new QueryBuilder();
     subQuery.select('1').from(relatedTable);
-    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.query.table}.${localKey}`));
+    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.#query.table}.${localKey}`));
 
     // Add additional conditions if callback provided
     if (callback && typeof callback === 'function') {
@@ -531,9 +535,9 @@ class QueryBuilder {
    * // orders[0].order_items_total_price_sum = 299.99
    */
   withSum(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this._parseAggregateAlias(relatedTable, column, 'SUM');
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'SUM');
 
-    this.query.aggregates.push({
+    this.#query.aggregates.push({
       type: 'SUM',
       relatedTable: table,
       foreignKey,
@@ -577,9 +581,9 @@ class QueryBuilder {
    * // orders[0].order_items_count = 3
    */
   withCount(relatedTable, foreignKey, localKey, callback = null) {
-    const { table, alias } = this._parseAggregateAlias(relatedTable, null, 'COUNT');
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, null, 'COUNT');
 
-    this.query.aggregates.push({
+    this.#query.aggregates.push({
       type: 'COUNT',
       relatedTable: table,
       foreignKey,
@@ -624,9 +628,9 @@ class QueryBuilder {
    * // orders[0].order_items_unit_price_avg = 49.99
    */
   withAvg(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this._parseAggregateAlias(relatedTable, column, 'AVG');
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'AVG');
 
-    this.query.aggregates.push({
+    this.#query.aggregates.push({
       type: 'AVG',
       relatedTable: table,
       foreignKey,
@@ -671,9 +675,9 @@ class QueryBuilder {
    * // orders[0].order_items_total_price_max = 199.99
    */
   withMax(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this._parseAggregateAlias(relatedTable, column, 'MAX');
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'MAX');
 
-    this.query.aggregates.push({
+    this.#query.aggregates.push({
       type: 'MAX',
       relatedTable: table,
       foreignKey,
@@ -718,9 +722,9 @@ class QueryBuilder {
    * // orders[0].order_items_unit_price_min = 12.99
    */
   withMin(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this._parseAggregateAlias(relatedTable, column, 'MIN');
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'MIN');
 
-    this.query.aggregates.push({
+    this.#query.aggregates.push({
       type: 'MIN',
       relatedTable: table,
       foreignKey,
@@ -739,7 +743,7 @@ class QueryBuilder {
    * @param {string} side - Pattern side: 'both', 'before', 'after'
    * @returns {string} LIKE pattern
    */
-  _createLikePattern(value, side) {
+  #createLikePattern(value, side) {
     if (side === 'before') return `%${value}`;
     if (side === 'after') return `${value}%`;
     return `%${value}%`;
@@ -757,8 +761,8 @@ class QueryBuilder {
    * query('users').like('name', 'John', 'after') // WHERE name LIKE 'John%'
    */
   like(column, value, side = 'both') {
-    const pattern = this._createLikePattern(value, side);
-    this.query.where.push({ column, operator: 'LIKE', value: pattern, type: 'AND' });
+    const pattern = this.#createLikePattern(value, side);
+    this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: 'AND' });
     return this;
   }
 
@@ -770,8 +774,8 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   orLike(column, value, side = 'both') {
-    const pattern = this._createLikePattern(value, side);
-    this.query.where.push({ column, operator: 'LIKE', value: pattern, type: 'OR' });
+    const pattern = this.#createLikePattern(value, side);
+    this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: 'OR' });
     return this;
   }
 
@@ -792,9 +796,9 @@ class QueryBuilder {
     }
 
     columns.forEach((column, index) => {
-      const pattern = this._createLikePattern(value, side);
+      const pattern = this.#createLikePattern(value, side);
       const conditionType = index === 0 ? 'AND' : 'OR';
-      this.query.where.push({ column, operator: 'LIKE', value: pattern, type: conditionType });
+      this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: conditionType });
     });
     return this;
   }
@@ -816,8 +820,8 @@ class QueryBuilder {
     }
 
     columns.forEach(column => {
-      const pattern = this._createLikePattern(value, side);
-      this.query.where.push({ column, operator: 'LIKE', value: pattern, type: 'OR' });
+      const pattern = this.#createLikePattern(value, side);
+      this.#query.where.push({ column, operator: 'LIKE', value: pattern, type: 'OR' });
     });
     return this;
   }
@@ -834,7 +838,7 @@ class QueryBuilder {
    * query('users').leftJoin('profiles', 'users.id = profiles.user_id')
    */
   join(table, condition, type = 'INNER') {
-    this.query.joins.push({ table, condition, type });
+    this.#query.joins.push({ table, condition, type });
     return this;
   }
 
@@ -867,7 +871,7 @@ class QueryBuilder {
    * query('users').select(['status', 'COUNT(*) as count']).groupBy('status')
    */
   groupBy(columns) {
-    this.query.groupBy = Array.isArray(columns) ? columns : [columns];
+    this.#query.groupBy = Array.isArray(columns) ? columns : [columns];
     return this;
   }
 
@@ -884,7 +888,7 @@ class QueryBuilder {
       operator = '=';
     }
 
-    this.query.having.push({ column, operator, value, type: 'AND' });
+    this.#query.having.push({ column, operator, value, type: 'AND' });
     return this;
   }
 
@@ -898,7 +902,7 @@ class QueryBuilder {
    * query('users').orderBy('created_at', 'DESC').orderBy('name', 'ASC')
    */
   orderBy(column, direction = 'ASC') {
-    this.query.orderBy.push({ column, direction });
+    this.#query.orderBy.push({ column, direction });
     return this;
   }
 
@@ -908,7 +912,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   limit(value) {
-    this.query.limit = value;
+    this.#query.limit = value;
     return this;
   }
 
@@ -918,7 +922,7 @@ class QueryBuilder {
    * @returns {QueryBuilder} QueryBuilder instance for chaining
    */
   offset(value) {
-    this.query.offset = value;
+    this.#query.offset = value;
     return this;
   }
 
@@ -931,9 +935,9 @@ class QueryBuilder {
    * query('users').insert({name: 'John', email: 'john@example.com'}).execute()
    */
   insert(data) {
-    this.query.type = 'INSERT';
-    this.query.table = data.table || this.query.table;
-    this.query.set = data;
+    this.#query.type = 'INSERT';
+    this.#query.table = data.table || this.#query.table;
+    this.#query.set = data;
     delete data.table;
     return this;
   }
@@ -947,9 +951,9 @@ class QueryBuilder {
    * query('users').update({status: 'active'}).where('id', 1).execute()
    */
   update(data) {
-    this.query.type = 'UPDATE';
-    this.query.table = data.table || this.query.table;
-    this.query.set = data;
+    this.#query.type = 'UPDATE';
+    this.#query.table = data.table || this.#query.table;
+    this.#query.set = data;
     delete data.table;
     return this;
   }
@@ -963,8 +967,8 @@ class QueryBuilder {
    * query('users').delete().where('id', 1).execute()
    */
   delete(table = null) {
-    this.query.type = 'DELETE';
-    if (table) this.query.table = table;
+    this.#query.type = 'DELETE';
+    if (table) this.#query.table = table;
     return this;
   }
 
@@ -974,13 +978,13 @@ class QueryBuilder {
    * @returns {string} WHERE clause SQL
    */
   buildWhere() {
-    if (this.query.where.length === 0) return '';
+    if (this.#query.where.length === 0) return '';
 
     let sql = ' WHERE ';
     let groupLevel = 0;
     let conditionsInGroup = [0]; // Track conditions per group level
 
-    this.query.where.forEach((condition, index) => {
+    this.#query.where.forEach((condition, index) => {
       if (condition.type === 'RAW') {
         // Handle raw SQL conditions (for composite keys)
         if (conditionsInGroup[groupLevel] > 0) {
@@ -988,7 +992,7 @@ class QueryBuilder {
         }
         conditionsInGroup[groupLevel]++;
         sql += condition.sql;
-        this.parameters.push(...condition.values);
+        this.#parameters.push(...condition.values);
       } else if (condition.type === 'GROUP_START') {
         // Add AND/OR before group if not the first condition in current group
         if (conditionsInGroup[groupLevel] > 0) {
@@ -1017,7 +1021,7 @@ class QueryBuilder {
         const isNegated = condition.type === 'NOT_EXISTS' || condition.type === 'OR_NOT_EXISTS';
         sql += isNegated ? `NOT EXISTS (${subSql})` : `EXISTS (${subSql})`;
         // Add subquery parameters to main parameters array
-        this.parameters.push(...condition.subQuery.parameters);
+        this.#parameters.push(...condition.subQuery.#parameters);
       } else if (condition.type === 'AGGREGATE_SUBQUERY') {
         // Add AND/OR if this is not the first condition in current group
         if (conditionsInGroup[groupLevel] > 0) {
@@ -1029,9 +1033,9 @@ class QueryBuilder {
         const subSql = condition.subQuery.buildSql();
         sql += `(${subSql}) ${condition.operator} ?`;
         // Add subquery parameters to main parameters array
-        this.parameters.push(...condition.subQuery.parameters);
+        this.#parameters.push(...condition.subQuery.#parameters);
         // Add comparison value
-        this.parameters.push(condition.value);
+        this.#parameters.push(condition.value);
       } else {
         // Regular condition
         // Add AND/OR if this is not the first condition in current group
@@ -1043,13 +1047,13 @@ class QueryBuilder {
         if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
           const placeholders = condition.value.map(() => '?').join(', ');
           sql += `${condition.column} ${condition.operator} (${placeholders})`;
-          this.parameters.push(...condition.value);
+          this.#parameters.push(...condition.value);
         } else if (condition.value instanceof RawSql) {
           // For raw SQL values (like column references), use directly without parameterizing
           sql += `${condition.column} ${condition.operator} ${condition.value.value}`;
         } else {
           sql += `${condition.column} ${condition.operator} ?`;
-          this.parameters.push(condition.value);
+          this.#parameters.push(condition.value);
         }
       }
     });
@@ -1063,15 +1067,15 @@ class QueryBuilder {
    * @returns {string} HAVING clause SQL
    */
   buildHaving() {
-    if (this.query.having.length === 0) return '';
+    if (this.#query.having.length === 0) return '';
 
     let sql = ' HAVING ';
-    this.query.having.forEach((condition, index) => {
+    this.#query.having.forEach((condition, index) => {
       if (index > 0) {
         sql += ` ${condition.type} `;
       }
       sql += `${condition.column} ${condition.operator} ?`;
-      this.parameters.push(condition.value);
+      this.#parameters.push(condition.value);
     });
 
     return sql;
@@ -1084,19 +1088,19 @@ class QueryBuilder {
    */
   buildSql() {
     // If no type is set, default to SELECT
-    if (!this.query.type) {
-      this.query.type = 'SELECT';
+    if (!this.#query.type) {
+      this.#query.type = 'SELECT';
     }
 
     let sql = '';
 
-    switch (this.query.type) {
+    switch (this.#query.type) {
       case 'SELECT':
-        let selectClause = this.query.select;
+        let selectClause = this.#query.select;
 
         // Add aggregate subqueries if any
-        if (this.query.aggregates.length > 0) {
-          const aggregateSelects = this.query.aggregates.map(agg => {
+        if (this.#query.aggregates.length > 0) {
+          const aggregateSelects = this.#query.aggregates.map(agg => {
             // Build subquery for aggregate
             const subQuery = new QueryBuilder();
             subQuery.from(agg.relatedTable);
@@ -1108,10 +1112,10 @@ class QueryBuilder {
 
               // Add multiple WHERE conditions for composite keys
               foreignKeys.forEach((fk, i) => {
-                subQuery.where(`${agg.relatedTable}.${fk}`, new RawSql(`${this.query.table}.${localKeys[i]}`));
+                subQuery.where(`${agg.relatedTable}.${fk}`, new RawSql(`${this.#query.table}.${localKeys[i]}`));
               });
             } else {
-              subQuery.where(`${agg.relatedTable}.${agg.foreignKey}`, new RawSql(`${this.query.table}.${agg.localKey}`));
+              subQuery.where(`${agg.relatedTable}.${agg.foreignKey}`, new RawSql(`${this.#query.table}.${agg.localKey}`));
             }
 
             // Apply callback if provided
@@ -1121,24 +1125,24 @@ class QueryBuilder {
 
             // Build aggregate function
             const aggFunc = agg.type === 'COUNT' ? 'COUNT(*)' : `${agg.type}(${agg.column})`;
-            subQuery.query.select = aggFunc;
-            subQuery.query.type = 'SELECT';
+            subQuery.#query.select = aggFunc;
+            subQuery.#query.type = 'SELECT';
 
             const subSql = subQuery.buildSql();
-            this.parameters.push(...subQuery.parameters);
+            this.#parameters.push(...subQuery.#parameters);
 
             return `(${subSql}) as ${agg.alias}`;
           });
 
           selectClause = selectClause === '*'
-            ? `${this.query.table}.*, ${aggregateSelects.join(', ')}`
+            ? `${this.#query.table}.*, ${aggregateSelects.join(', ')}`
             : `${selectClause}, ${aggregateSelects.join(', ')}`;
         }
 
-        sql = `SELECT ${this.query.distinct ? 'DISTINCT ' : ''}${selectClause} FROM ${this.query.table}`;
+        sql = `SELECT ${this.#query.distinct ? 'DISTINCT ' : ''}${selectClause} FROM ${this.#query.table}`;
 
         // JOINs
-        this.query.joins.forEach(join => {
+        this.#query.joins.forEach(join => {
           sql += ` ${join.type} JOIN ${join.table} ON ${join.condition}`;
         });
 
@@ -1146,46 +1150,46 @@ class QueryBuilder {
         sql += this.buildWhere();
 
         // GROUP BY
-        if (this.query.groupBy.length > 0) {
-          sql += ` GROUP BY ${this.query.groupBy.join(', ')}`;
+        if (this.#query.groupBy.length > 0) {
+          sql += ` GROUP BY ${this.#query.groupBy.join(', ')}`;
         }
 
         // HAVING
         sql += this.buildHaving();
 
         // ORDER BY
-        if (this.query.orderBy.length > 0) {
+        if (this.#query.orderBy.length > 0) {
           sql += ' ORDER BY ';
-          sql += this.query.orderBy.map(order => `${order.column} ${order.direction}`).join(', ');
+          sql += this.#query.orderBy.map(order => `${order.column} ${order.direction}`).join(', ');
         }
 
         // LIMIT and OFFSET
-        if (this.query.limit) {
-          sql += ` LIMIT ${this.query.limit}`;
-          if (this.query.offset) {
-            sql += ` OFFSET ${this.query.offset}`;
+        if (this.#query.limit) {
+          sql += ` LIMIT ${this.#query.limit}`;
+          if (this.#query.offset) {
+            sql += ` OFFSET ${this.#query.offset}`;
           }
         }
         break;
 
       case 'INSERT':
-        const columns = Object.keys(this.query.set);
+        const columns = Object.keys(this.#query.set);
         const placeholders = columns.map(() => '?').join(', ');
-        sql = `INSERT INTO ${this.query.table} (${columns.join(', ')}) VALUES (${placeholders})`;
-        this.parameters = columns.map(col => this.query.set[col]);
+        sql = `INSERT INTO ${this.#query.table} (${columns.join(', ')}) VALUES (${placeholders})`;
+        this.#parameters = columns.map(col => this.#query.set[col]);
         break;
 
       case 'UPDATE':
-        sql = `UPDATE ${this.query.table} SET `;
-        const updates = Object.keys(this.query.set).map(col => `${col} = ?`);
+        sql = `UPDATE ${this.#query.table} SET `;
+        const updates = Object.keys(this.#query.set).map(col => `${col} = ?`);
         sql += updates.join(', ');
-        this.parameters = Object.values(this.query.set);
+        this.#parameters = Object.values(this.#query.set);
 
         sql += this.buildWhere();
         break;
 
       case 'DELETE':
-        sql = `DELETE FROM ${this.query.table}`;
+        sql = `DELETE FROM ${this.#query.table}`;
         sql += this.buildWhere();
         break;
     }
@@ -1203,14 +1207,14 @@ class QueryBuilder {
    */
   async get() {
     const sql = this.buildSql();
-    const result = await db.query(sql, this.parameters);
+    const result = await db.query(sql, this.#parameters);
     let rows = result.rows;
 
     // Convert aggregate results to numbers (MySQL returns strings for aggregates)
-    if (this.query.aggregates.length > 0 && rows.length > 0) {
+    if (this.#query.aggregates.length > 0 && rows.length > 0) {
       rows = rows.map(row => {
         const newRow = { ...row };
-        this.query.aggregates.forEach(agg => {
+        this.#query.aggregates.forEach(agg => {
           if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
             newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
           }
@@ -1220,11 +1224,11 @@ class QueryBuilder {
     }
 
     // Process eager loaded relationships (two-query approach like Laravel)
-    if (this.query.with.length > 0 && rows.length > 0) {
-      rows = await this._loadRelations(rows, this.query.with);
+    if (this.#query.with.length > 0 && rows.length > 0) {
+      rows = await this.#loadRelations(rows, this.#query.with);
     }
 
-    this.reset(); // Reset for next query
+    this.#reset(); // Reset for next query
     return rows;
   }
 
@@ -1267,21 +1271,21 @@ class QueryBuilder {
     let page = 0;
 
     // Save the original limit and offset
-    const originalLimit = this.query.limit;
-    const originalOffset = this.query.offset;
+    const originalLimit = this.#query.limit;
+    const originalOffset = this.#query.offset;
 
     try {
       while (true) {
         // Reset parameters for each iteration
-        this.parameters = [];
+        this.#parameters = [];
 
         // Set pagination for this chunk
-        this.query.limit = size;
-        this.query.offset = page * size;
+        this.#query.limit = size;
+        this.#query.offset = page * size;
 
         // Execute query (without eager loading to keep memory efficient)
         const sql = this.buildSql();
-        const result = await db.query(sql, this.parameters);
+        const result = await db.query(sql, this.#parameters);
         const rows = result.rows;
 
         // No more rows, we're done
@@ -1306,9 +1310,9 @@ class QueryBuilder {
       }
     } finally {
       // Restore original values and reset
-      this.query.limit = originalLimit;
-      this.query.offset = originalOffset;
-      this.reset();
+      this.#query.limit = originalLimit;
+      this.#query.offset = originalOffset;
+      this.#reset();
     }
 
     return true;
@@ -1362,30 +1366,30 @@ class QueryBuilder {
     let lastId = null;
 
     // Save original values
-    const originalLimit = this.query.limit;
-    const originalOrderBy = [...this.query.orderBy];
-    const originalWhere = [...this.query.where];
+    const originalLimit = this.#query.limit;
+    const originalOrderBy = [...this.#query.orderBy];
+    const originalWhere = [...this.#query.where];
 
     // Determine the full column name (with alias if provided)
     const fullColumn = alias ? `${alias}.${column}` : column;
 
     try {
       // Add ORDER BY if not already present for the chunk column
-      const hasOrderBy = this.query.orderBy.some(order =>
+      const hasOrderBy = this.#query.orderBy.some(order =>
         order.column === column || order.column === fullColumn
       );
 
       if (!hasOrderBy) {
-        this.query.orderBy.push({ column: fullColumn, direction: 'ASC' });
+        this.#query.orderBy.push({ column: fullColumn, direction: 'ASC' });
       }
 
       while (true) {
         // Reset parameters for each iteration
-        this.parameters = [];
+        this.#parameters = [];
 
         // Set WHERE condition for ID-based pagination
         if (lastId !== null) {
-          this.query.where.push({
+          this.#query.where.push({
             column: fullColumn,
             operator: '>',
             value: lastId,
@@ -1394,11 +1398,11 @@ class QueryBuilder {
         }
 
         // Set limit for this chunk
-        this.query.limit = size;
+        this.#query.limit = size;
 
         // Execute query (without eager loading to keep memory efficient)
         const sql = this.buildSql();
-        const result = await db.query(sql, this.parameters);
+        const result = await db.query(sql, this.#parameters);
         const rows = result.rows;
 
         // No more rows, we're done
@@ -1423,16 +1427,16 @@ class QueryBuilder {
         }
 
         // Reset where conditions for next iteration (keep original conditions)
-        this.query.where = [...originalWhere];
+        this.#query.where = [...originalWhere];
 
         page++;
       }
     } finally {
       // Restore original values and reset
-      this.query.limit = originalLimit;
-      this.query.orderBy = originalOrderBy;
-      this.query.where = originalWhere;
-      this.reset();
+      this.#query.limit = originalLimit;
+      this.#query.orderBy = originalOrderBy;
+      this.#query.where = originalWhere;
+      this.#reset();
     }
 
     return true;
@@ -1445,7 +1449,7 @@ class QueryBuilder {
    * @param {array} relations - Relations to load
    * @returns {Promise<array>} Rows with loaded relations
    */
-  async _loadRelations(rows, relations) {
+  async #loadRelations(rows, relations) {
     for (const relation of relations) {
       // Check if we're dealing with composite keys (arrays)
       const isCompositeKey = Array.isArray(relation.foreignKey);
@@ -1483,7 +1487,7 @@ class QueryBuilder {
           return `(${conditions})`;
         }).join(' OR ');
 
-        relatedQuery.query.where.push({
+        relatedQuery.#query.where.push({
           type: 'RAW',
           sql: tupleConditions,
           values: localKeyValuePairs.flat()
@@ -1496,12 +1500,12 @@ class QueryBuilder {
 
         // Fetch related records
         const relatedSql = relatedQuery.buildSql();
-        const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
+        const relatedResult = await db.query(relatedSql, relatedQuery.#parameters);
         let relatedRecords = relatedResult.rows;
 
         // Process nested relations if any were defined in the callback
-        if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
-          relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
+        if (relatedQuery.#query.with.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = await this.#loadRelations(relatedRecords, relatedQuery.#query.with);
         }
 
         // Group related records by composite key
@@ -1559,12 +1563,12 @@ class QueryBuilder {
 
         // Fetch related records
         const relatedSql = relatedQuery.buildSql();
-        const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
+        const relatedResult = await db.query(relatedSql, relatedQuery.#parameters);
         let relatedRecords = relatedResult.rows;
 
         // Process nested relations if any were defined in the callback
-        if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
-          relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
+        if (relatedQuery.#query.with.length > 0 && relatedRecords.length > 0) {
+          relatedRecords = await this.#loadRelations(relatedRecords, relatedQuery.#query.with);
         }
 
         if (relation.type === 'hasOne') {
@@ -1643,10 +1647,10 @@ class QueryBuilder {
    * const totalUsers = await query('users').count();
    */
   async count() {
-    const originalSelect = this.query.select;
-    this.query.select = 'COUNT(*) as count';
+    const originalSelect = this.#query.select;
+    this.#query.select = 'COUNT(*) as count';
     const result = await this.first();
-    this.query.select = originalSelect;
+    this.#query.select = originalSelect;
     return result ? result.count : 0;
   }
 
@@ -1662,13 +1666,13 @@ class QueryBuilder {
     const sql = this.buildSql();
     let result;
 
-    if (this.query.type === 'INSERT') {
-      result = await db.insert(sql, this.parameters);
-    } else if (this.query.type === 'UPDATE' || this.query.type === 'DELETE') {
-      result = await db.update(sql, this.parameters);
+    if (this.#query.type === 'INSERT') {
+      result = await db.insert(sql, this.#parameters);
+    } else if (this.#query.type === 'UPDATE' || this.#query.type === 'DELETE') {
+      result = await db.update(sql, this.#parameters);
     }
 
-    this.reset();
+    this.#reset();
     return result;
   }
 
@@ -1693,7 +1697,7 @@ class QueryBuilder {
    * console.log(params); // [1]
    */
   getParameters() {
-    return this.parameters;
+    return this.#parameters;
   }
 }
 
