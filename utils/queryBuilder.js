@@ -196,6 +196,109 @@ class QueryBuilder {
   }
 
   /**
+   * Add WHERE condition comparing two columns
+   * @param {string} firstColumn - Left column name
+   * @param {string} [operator='='] - Comparison operator
+   * @param {string} secondColumn - Right column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').whereColumn('created_at', '>=', 'updated_at')
+   */
+  whereColumn(firstColumn, operator = '=', secondColumn) {
+    this.#validateColumnName(firstColumn, 'WHERE');
+    this.#validateColumnName(secondColumn, 'WHERE');
+
+    const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<='];
+    if (!validOperators.includes(operator)) {
+      throw new Error(`Invalid operator: ${operator}`);
+    }
+
+    this.#query.where.push({
+      column: firstColumn,
+      operator,
+      value: new RawSql(secondColumn),
+      type: 'AND'
+    });
+    return this;
+  }
+
+  /**
+   * Add OR WHERE condition comparing two columns
+   * @param {string} firstColumn - Left column name
+   * @param {string} [operator='='] - Comparison operator
+   * @param {string} secondColumn - Right column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  orWhereColumn(firstColumn, operator = '=', secondColumn) {
+    this.#validateColumnName(firstColumn, 'WHERE');
+    this.#validateColumnName(secondColumn, 'WHERE');
+
+    const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<='];
+    if (!validOperators.includes(operator)) {
+      throw new Error(`Invalid operator: ${operator}`);
+    }
+
+    this.#query.where.push({
+      column: firstColumn,
+      operator,
+      value: new RawSql(secondColumn),
+      type: 'OR'
+    });
+    return this;
+  }
+
+  /**
+   * Add WHERE column IS NULL condition
+   * @param {string} column - Column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').whereNull('deleted_at') // WHERE deleted_at IS NULL
+   */
+  whereNull(column) {
+    this.#validateColumnName(column, 'WHERE');
+    this.#query.where.push({ column, operator: 'IS', value: null, type: 'AND' });
+    return this;
+  }
+
+  /**
+   * Add OR WHERE column IS NULL condition
+   * @param {string} column - Column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  orWhereNull(column) {
+    this.#validateColumnName(column, 'WHERE');
+    this.#query.where.push({ column, operator: 'IS', value: null, type: 'OR' });
+    return this;
+  }
+
+  /**
+   * Add WHERE column IS NOT NULL condition
+   * @param {string} column - Column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').whereNotNull('deleted_at') // WHERE deleted_at IS NOT NULL
+   */
+  whereNotNull(column) {
+    this.#validateColumnName(column, 'WHERE');
+    this.#query.where.push({ column, operator: 'IS NOT', value: null, type: 'AND' });
+    return this;
+  }
+
+  /**
+   * Add OR WHERE column IS NOT NULL condition
+   * @param {string} column - Column name
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  orWhereNotNull(column) {
+    this.#validateColumnName(column, 'WHERE');
+    this.#query.where.push({ column, operator: 'IS NOT', value: null, type: 'OR' });
+    return this;
+  }
+
+  /**
    * Add WHERE condition with OR logic
    * @param {string} column - Column name
    * @param {string|any} operator - Operator or value
@@ -279,6 +382,69 @@ class QueryBuilder {
       return this;
     }
     this.#query.where.push({ column, operator: 'NOT IN', value: values, type: 'AND' });
+    return this;
+  }
+
+  /**
+   * Add WHERE BETWEEN condition
+   * @param {string} column - Column name
+   * @param {any[]} values - Array with two values [start, end]
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('transactions').whereBetween('total_amount', [100, 500])
+   */
+  whereBetween(column, values) {
+    this.#validateColumnName(column, 'WHERE');
+    if (!Array.isArray(values) || values.length !== 2) {
+      throw new Error('whereBetween() requires an array of two values');
+    }
+    this.#query.where.push({ column, operator: 'BETWEEN', value: values, type: 'AND' });
+    return this;
+  }
+
+  /**
+   * Add WHERE NOT BETWEEN condition
+   * @param {string} column - Column name
+   * @param {any[]} values - Array with two values [start, end]
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  whereNotBetween(column, values) {
+    this.#validateColumnName(column, 'WHERE');
+    if (!Array.isArray(values) || values.length !== 2) {
+      throw new Error('whereNotBetween() requires an array of two values');
+    }
+    this.#query.where.push({ column, operator: 'NOT BETWEEN', value: values, type: 'AND' });
+    return this;
+  }
+
+  /**
+   * Add OR WHERE BETWEEN condition
+   * @param {string} column - Column name
+   * @param {any[]} values - Array with two values [start, end]
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  orWhereBetween(column, values) {
+    this.#validateColumnName(column, 'WHERE');
+    if (!Array.isArray(values) || values.length !== 2) {
+      throw new Error('orWhereBetween() requires an array of two values');
+    }
+    this.#query.where.push({ column, operator: 'BETWEEN', value: values, type: 'OR' });
+    return this;
+  }
+
+  /**
+   * Add OR WHERE NOT BETWEEN condition
+   * @param {string} column - Column name
+   * @param {any[]} values - Array with two values [start, end]
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  orWhereNotBetween(column, values) {
+    this.#validateColumnName(column, 'WHERE');
+    if (!Array.isArray(values) || values.length !== 2) {
+      throw new Error('orWhereNotBetween() requires an array of two values');
+    }
+    this.#query.where.push({ column, operator: 'NOT BETWEEN', value: values, type: 'OR' });
     return this;
   }
 
@@ -1326,6 +1492,56 @@ class QueryBuilder {
   }
 
   /**
+   * Prepare INSERT MANY query (bulk insert)
+   * @param {object[]} rows - Array of row objects to insert
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * query('users').insertMany([
+   *   { username: 'a', email: 'a@example.com' },
+   *   { username: 'b', email: 'b@example.com' }
+   * ]).execute()
+   */
+  insertMany(rows) {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      throw new Error('insertMany() requires a non-empty array of rows');
+    }
+
+    this.#query.type = 'INSERT';
+
+    const normalizedRows = rows.map((row, index) => {
+      if (!row || typeof row !== 'object') {
+        throw new Error(`insertMany() row ${index} must be an object`);
+      }
+      const { table, ...rowData } = row;
+      if (table) {
+        if (!this.#query.table) {
+          this.#query.table = table;
+        } else if (this.#query.table !== table) {
+          throw new Error('insertMany() rows must target the same table');
+        }
+      }
+      return rowData;
+    });
+
+    const baseColumns = Object.keys(normalizedRows[0]);
+    if (baseColumns.length === 0) {
+      throw new Error('insertMany() requires row data');
+    }
+
+    normalizedRows.forEach((row, index) => {
+      const rowColumns = Object.keys(row);
+      if (rowColumns.length !== baseColumns.length || !baseColumns.every(col => rowColumns.includes(col))) {
+        throw new Error(`insertMany() row ${index} must have the same columns`);
+      }
+    });
+
+    this.#query.values = normalizedRows;
+    this.#query.set = null;
+    return this;
+  }
+
+  /**
    * Prepare UPDATE query
    * @param {object} data - Data to update (column-value pairs)
    * @returns {QueryBuilder} QueryBuilder instance for chaining
@@ -1361,16 +1577,20 @@ class QueryBuilder {
     const { table, ...insertData } = data;
     if (table) this.#query.table = table;
 
-    if (Object.keys(insertData).length === 0) {
+    const insertEntries = Object.entries(insertData)
+      .filter(([, value]) => value !== undefined);
+
+    if (insertEntries.length === 0) {
       throw new Error('upsert() requires insert data');
     }
 
-    const updates = updateData === null ? insertData : updateData;
+    const normalizedInsertData = Object.fromEntries(insertEntries);
+    const updates = updateData === null ? normalizedInsertData : updateData;
     if (!updates || typeof updates !== 'object' || Object.keys(updates).length === 0) {
       throw new Error('upsert() requires update data');
     }
 
-    this.#query.set = insertData;
+    this.#query.set = normalizedInsertData;
     this.#query.upsertUpdate = updates;
     return this;
   }
@@ -1465,9 +1685,14 @@ class QueryBuilder {
           const placeholders = condition.value.map(() => '?').join(', ');
           sql += `${condition.column} ${condition.operator} (${placeholders})`;
           this.#parameters.push(...condition.value);
+        } else if (condition.operator === 'BETWEEN' || condition.operator === 'NOT BETWEEN') {
+          sql += `${condition.column} ${condition.operator} ? AND ?`;
+          this.#parameters.push(condition.value[0], condition.value[1]);
         } else if (condition.value instanceof RawSql) {
           // For raw SQL values (like column references), use directly without parameterizing
           sql += `${condition.column} ${condition.operator} ${condition.value.value}`;
+        } else if ((condition.operator === 'IS' || condition.operator === 'IS NOT') && condition.value === null) {
+          sql += `${condition.column} ${condition.operator} NULL`;
         } else {
           sql += `${condition.column} ${condition.operator} ?`;
           this.#parameters.push(condition.value);
@@ -1632,10 +1857,23 @@ class QueryBuilder {
         break;
 
       case 'INSERT':
-        const columns = Object.keys(this.#query.set);
-        const placeholders = columns.map(() => '?').join(', ');
-        sql = `INSERT INTO ${this.#query.table} (${columns.join(', ')}) VALUES (${placeholders})`;
-        this.#parameters = columns.map(col => this.#query.set[col]);
+        if (this.#query.values && this.#query.values.length > 0) {
+          const columns = Object.keys(this.#query.values[0]);
+          const rowPlaceholder = `(${columns.map(() => '?').join(', ')})`;
+          const placeholders = this.#query.values.map(() => rowPlaceholder).join(', ');
+          sql = `INSERT INTO ${this.#query.table} (${columns.join(', ')}) VALUES ${placeholders}`;
+          this.#parameters = [];
+          this.#query.values.forEach(row => {
+            columns.forEach(col => {
+              this.#parameters.push(row[col]);
+            });
+          });
+        } else {
+          const columns = Object.keys(this.#query.set);
+          const placeholders = columns.map(() => '?').join(', ');
+          sql = `INSERT INTO ${this.#query.table} (${columns.join(', ')}) VALUES (${placeholders})`;
+          this.#parameters = columns.map(col => this.#query.set[col]);
+        }
         break;
 
       case 'UPDATE':

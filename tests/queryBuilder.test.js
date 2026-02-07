@@ -164,6 +164,83 @@ async function testOrWhere() {
   assertEquals(users.length, 2, 'OR WHERE: Returns both users');
 }
 
+async function testWhereNullHelpers() {
+  const whereNullQuery = query('users').whereNull('deleted_at');
+  const whereNullSql = whereNullQuery.toSql();
+  assertEquals(whereNullSql, 'SELECT * FROM users WHERE deleted_at IS NULL', 'WHERE NULL: Builds IS NULL');
+  assertEquals(whereNullQuery.getParameters().length, 0, 'WHERE NULL: No parameters');
+
+  const orWhereNullSql = query('users')
+    .where('username', 'john_doe')
+    .orWhereNull('email')
+    .toSql();
+  assertEquals(orWhereNullSql, 'SELECT * FROM users WHERE username = ? OR email IS NULL', 'OR WHERE NULL: Builds OR IS NULL');
+
+  const whereNotNullSql = query('users')
+    .whereNotNull('email')
+    .toSql();
+  assertEquals(whereNotNullSql, 'SELECT * FROM users WHERE email IS NOT NULL', 'WHERE NOT NULL: Builds IS NOT NULL');
+
+  const orWhereNotNullSql = query('users')
+    .where('status', 'active')
+    .orWhereNotNull('deleted_at')
+    .toSql();
+  assertEquals(orWhereNotNullSql, 'SELECT * FROM users WHERE status = ? OR deleted_at IS NOT NULL', 'OR WHERE NOT NULL: Builds OR IS NOT NULL');
+}
+
+async function testWhereBetweenHelpers() {
+  const betweenQuery = query('transactions')
+    .whereBetween('total_amount', [100, 500]);
+  const betweenSql = betweenQuery.toSql();
+  assertEquals(betweenSql, 'SELECT * FROM transactions WHERE total_amount BETWEEN ? AND ?', 'WHERE BETWEEN: Builds BETWEEN');
+  assertEquals(betweenQuery.getParameters(), [100, 500], 'WHERE BETWEEN: Binds range parameters');
+
+  const notBetweenQuery = query('transactions')
+    .whereNotBetween('total_amount', [100, 500]);
+  const notBetweenSql = notBetweenQuery.toSql();
+  assertEquals(notBetweenSql, 'SELECT * FROM transactions WHERE total_amount NOT BETWEEN ? AND ?', 'WHERE NOT BETWEEN: Builds NOT BETWEEN');
+  assertEquals(notBetweenQuery.getParameters(), [100, 500], 'WHERE NOT BETWEEN: Binds range parameters');
+
+  const orBetweenQuery = query('transactions')
+    .where('status', 'completed')
+    .orWhereBetween('total_amount', [100, 500]);
+  const orBetweenSql = orBetweenQuery.toSql();
+  assertEquals(orBetweenSql, 'SELECT * FROM transactions WHERE status = ? OR total_amount BETWEEN ? AND ?', 'OR WHERE BETWEEN: Builds OR BETWEEN');
+  assertEquals(orBetweenQuery.getParameters(), ['completed', 100, 500], 'OR WHERE BETWEEN: Binds parameters');
+
+  const orNotBetweenQuery = query('transactions')
+    .where('status', 'pending')
+    .orWhereNotBetween('total_amount', [100, 500]);
+  const orNotBetweenSql = orNotBetweenQuery.toSql();
+  assertEquals(orNotBetweenSql, 'SELECT * FROM transactions WHERE status = ? OR total_amount NOT BETWEEN ? AND ?', 'OR WHERE NOT BETWEEN: Builds OR NOT BETWEEN');
+  assertEquals(orNotBetweenQuery.getParameters(), ['pending', 100, 500], 'OR WHERE NOT BETWEEN: Binds parameters');
+
+  assertThrows(() => {
+    query('transactions').whereBetween('total_amount', [100]);
+  }, 'WHERE BETWEEN: Rejects invalid range length');
+
+  assertThrows(() => {
+    query('transactions').whereNotBetween('total_amount', [100]);
+  }, 'WHERE NOT BETWEEN: Rejects invalid range length');
+}
+
+async function testWhereColumnHelpers() {
+  const whereColumnSql = query('users')
+    .whereColumn('created_at', '>=', 'updated_at')
+    .toSql();
+  assertEquals(whereColumnSql, 'SELECT * FROM users WHERE created_at >= updated_at', 'WHERE COLUMN: Builds column comparison');
+
+  const orWhereColumnSql = query('users')
+    .where('username', 'john_doe')
+    .orWhereColumn('created_at', '<', 'updated_at')
+    .toSql();
+  assertEquals(orWhereColumnSql, 'SELECT * FROM users WHERE username = ? OR created_at < updated_at', 'OR WHERE COLUMN: Builds OR column comparison');
+
+  assertThrows(() => {
+    query('users').whereColumn('created_at', 'LIKE', 'updated_at');
+  }, 'WHERE COLUMN: Rejects invalid operator');
+}
+
 async function testInvalidColumnIdentifiers() {
   assertThrows(() => {
     query('users').where('username; DROP TABLE users', 'john_doe');
@@ -514,6 +591,52 @@ async function testInsert() {
   await query('users').delete().where('id', insertId).execute();
 }
 
+async function testInsertMany() {
+  const timestamp = Date.now();
+  const usersToInsert = [
+    {
+      username: `bulk_user_a_${timestamp}`,
+      email: `bulk_a_${timestamp}@example.com`,
+      password_hash: '$2b$10$testhash',
+      first_name: 'Bulk',
+      last_name: 'UserA'
+    },
+    {
+      username: `bulk_user_b_${timestamp}`,
+      email: `bulk_b_${timestamp}@example.com`,
+      password_hash: '$2b$10$testhash',
+      first_name: 'Bulk',
+      last_name: 'UserB'
+    }
+  ];
+
+  const insertId = await query('users')
+    .insertMany(usersToInsert)
+    .execute();
+
+  assert(insertId > 0, 'INSERT MANY: Returns insert ID');
+
+  const inserted = await query('users')
+    .whereIn('username', usersToInsert.map(u => u.username))
+    .get();
+  assertEquals(inserted.length, 2, 'INSERT MANY: Inserts all rows');
+
+  await query('users')
+    .delete()
+    .whereIn('username', usersToInsert.map(u => u.username))
+    .execute();
+}
+
+async function testInsertManyValidation() {
+  assertThrows(() => {
+    query('users').insertMany([]);
+  }, 'INSERT MANY: Rejects empty rows');
+
+  assertThrows(() => {
+    query('users').insertMany([{ username: 'a' }, { username: 'b', email: 'b@example.com' }]);
+  }, 'INSERT MANY: Rejects mismatched columns');
+}
+
 console.log('\n✏️ UPDATE QUERIES\n');
 
 async function testUpdate() {
@@ -774,6 +897,9 @@ async function runAllTests() {
     await testWhereIn();
     await testWhereNotIn();
     await testOrWhere();
+    await testWhereNullHelpers();
+    await testWhereBetweenHelpers();
+    await testWhereColumnHelpers();
     await testInvalidColumnIdentifiers();
     
     // Grouped conditions
@@ -822,6 +948,8 @@ async function runAllTests() {
     
     // INSERT, UPDATE, DELETE
     await testInsert();
+    await testInsertMany();
+    await testInsertManyValidation();
     await testUpdate();
     await testUpsertUpdatesExisting();
     await testDelete();
