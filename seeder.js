@@ -57,6 +57,19 @@ async function createDatabase() {
 
 async function createTables(connection) {
   try {
+    // Drop existing tables if they exist (to ensure fresh schema)
+    await connection.execute('SET FOREIGN_KEY_CHECKS=0');
+    await connection.execute('DROP TABLE IF EXISTS reviews');
+    await connection.execute('DROP TABLE IF EXISTS transaction_details');
+    await connection.execute('DROP TABLE IF EXISTS payment_histories');
+    await connection.execute('DROP TABLE IF EXISTS transactions');
+    await connection.execute('DROP TABLE IF EXISTS payment_methods');
+    await connection.execute('DROP TABLE IF EXISTS products');
+    await connection.execute('DROP TABLE IF EXISTS categories');
+    await connection.execute('DROP TABLE IF EXISTS users');
+    await connection.execute('SET FOREIGN_KEY_CHECKS=1');
+    console.log('✅ Old tables dropped');
+
     // Users table
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS users (
@@ -73,6 +86,32 @@ async function createTables(connection) {
       )
     `);
     console.log('✅ Users table created');
+
+    // EXAMPLE: Categories table (create early since products references it)
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS categories (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) UNIQUE NOT NULL,
+        description TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    console.log('✅ Categories table created');
+
+    // EXAMPLE: Products table (needs to exist before transaction_details references it)
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS products (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        category_id INT NOT NULL,
+        description TEXT,
+        price DECIMAL(10,2) NOT NULL,
+        stock INT DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE RESTRICT
+      )
+    `);
+    console.log('✅ Products table created');
 
     // Payment methods table
     await connection.execute(`
@@ -112,11 +151,12 @@ async function createTables(connection) {
     `);
     console.log('✅ Transactions table created');
 
-    // Transaction details table
+    // Transaction details table (now products exists!)
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS transaction_details (
         id INT AUTO_INCREMENT PRIMARY KEY,
         transaction_id INT NOT NULL,
+        product_id INT NOT NULL,
         item_name VARCHAR(100) NOT NULL,
         item_description TEXT,
         quantity INT NOT NULL DEFAULT 1,
@@ -125,7 +165,8 @@ async function createTables(connection) {
         category VARCHAR(50),
         sku VARCHAR(50),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE
+        FOREIGN KEY (transaction_id) REFERENCES transactions(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE RESTRICT
       )
     `);
     console.log('✅ Transaction details table created');
@@ -148,6 +189,25 @@ async function createTables(connection) {
     `);
     console.log('✅ Payment histories table created');
 
+    // EXAMPLE: Reviews table (uses 2 foreign keys)
+    await connection.execute(`
+      CREATE TABLE IF NOT EXISTS reviews (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        product_id INT NOT NULL,
+        rating INT CHECK (rating >= 1 AND rating <= 5),
+        title VARCHAR(100),
+        content TEXT,
+        is_verified BOOLEAN DEFAULT FALSE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+      )
+    `);
+    console.log('✅ Reviews table created (2 Foreign Keys example)');
+
+
   } catch (error) {
     console.error('❌ Error creating tables:', error);
     throw error;
@@ -164,6 +224,26 @@ async function seedData(connection) {
       ('bob_wilson', 'bob@example.com', '$2b$10$hashedpassword3', 'Bob', 'Wilson', '+1234567892', '789 Pine Rd, City, State 12347')
     `);
     console.log('✅ Users seeded');
+
+    // Seed Categories (must come before products)
+    const [categoryResult] = await connection.execute(`
+      INSERT INTO categories (name, description) VALUES
+      ('Electronics', 'Electronic devices and gadgets'),
+      ('Books', 'Books and educational materials'),
+      ('Accessories', 'Phone and computer accessories')
+    `);
+    console.log('✅ Categories seeded');
+
+    // Seed Products (must come before transaction_details)
+    const [productResult] = await connection.execute(`
+      INSERT INTO products (name, category_id, description, price, stock) VALUES
+      ('Wireless Headphones', 1, 'Bluetooth headphones with noise cancellation', 99.99, 50),
+      ('Programming Book', 2, 'Advanced JavaScript Programming Guide', 45.00, 30),
+      ('Phone Case', 3, 'Protective smartphone case', 25.00, 100),
+      ('USB-C Cable', 1, 'Fast charging USB-C cable', 12.99, 200),
+      ('Desk Lamp', 1, 'LED desk lamp with USB charging', 34.99, 25)
+    `);
+    console.log('✅ Products seeded');
 
     // Insert payment methods
     await connection.execute(`
@@ -187,17 +267,17 @@ async function seedData(connection) {
 
     // Insert transaction details
     await connection.execute(`
-      INSERT INTO transaction_details (transaction_id, item_name, item_description, quantity, unit_price, total_price, category, sku) VALUES
-      (1, 'Wireless Headphones', 'Bluetooth wireless headphones with noise cancellation', 1, 120.00, 120.00, 'Electronics', 'WH-001'),
-      (1, 'Phone Case', 'Protective case for smartphone', 1, 25.00, 25.00, 'Accessories', 'PC-001'),
-      (2, 'USB Cable', 'Fast charging USB-C cable', 2, 12.99, 25.98, 'Electronics', 'UC-001'),
-      (2, 'Wireless Mouse', 'Ergonomic wireless mouse', 1, 39.99, 39.99, 'Electronics', 'WM-001'),
-      (2, 'Screen Protector', 'Tempered glass screen protector', 1, 24.02, 24.02, 'Accessories', 'SP-001'),
-      (3, 'Programming Book', 'Advanced JavaScript programming guide', 1, 35.00, 35.00, 'Books', 'PB-001'),
-      (3, 'Coffee Mug', 'Developer themed coffee mug', 1, 10.50, 10.50, 'Accessories', 'CM-001'),
-      (4, 'Laptop Stand', 'Adjustable aluminum laptop stand', 1, 89.99, 89.99, 'Electronics', 'LS-001'),
-      (4, 'External Hard Drive', '2TB portable hard drive', 1, 149.99, 149.99, 'Electronics', 'HD-001'),
-      (4, 'Cable Organizer', 'Desk cable management solution', 1, 60.01, 60.01, 'Accessories', 'CO-001')
+      INSERT INTO transaction_details (transaction_id, product_id, item_name, item_description, quantity, unit_price, total_price, category, sku) VALUES
+      (1, 1, 'Wireless Headphones', 'Bluetooth wireless headphones with noise cancellation', 1, 99.99, 99.99, 'Electronics', 'WH-001'),
+      (1, 3, 'Phone Case', 'Protective case for smartphone', 1, 25.00, 25.00, 'Accessories', 'PC-001'),
+      (2, 4, 'USB-C Cable', 'Fast charging USB-C cable', 2, 12.99, 25.98, 'Electronics', 'UC-001'),
+      (2, 5, 'Desk Lamp', 'LED desk lamp with USB charging', 1, 39.99, 39.99, 'Electronics', 'LS-001'),
+      (2, 3, 'Phone Case', 'Protective smartphone case', 1, 24.02, 24.02, 'Accessories', 'PC-001'),
+      (3, 2, 'Programming Book', 'Advanced JavaScript programming guide', 1, 35.00, 35.00, 'Books', 'PB-001'),
+      (3, 3, 'Phone Case', 'Protective case for smartphone', 1, 10.50, 10.50, 'Accessories', 'PC-001'),
+      (4, 5, 'Desk Lamp', 'LED desk lamp with USB charging', 1, 89.99, 89.99, 'Electronics', 'LS-001'),
+      (4, 1, 'Wireless Headphones', 'Bluetooth headphones with noise cancellation', 1, 99.99, 99.99, 'Electronics', 'WH-001'),
+      (4, 4, 'USB-C Cable', 'Fast charging USB-C cable', 1, 60.01, 60.01, 'Accessories', 'UC-001')
     `);
     console.log('✅ Transaction details seeded');
 
@@ -210,6 +290,19 @@ async function seedData(connection) {
       (4, 4, 299.99, 'initiated', 'REF-004-901234', NULL)
     `);
     console.log('✅ Payment histories seeded');
+
+    // Seed Reviews (with 2 foreign keys)
+    // user_id references users table, product_id references products table
+    await connection.execute(`
+      INSERT INTO reviews (user_id, product_id, rating, title, content, is_verified) VALUES
+      (1, 1, 5, 'Excellent quality!', 'Great sound and very comfortable to wear. Highly recommended!', TRUE),
+      (1, 3, 4, 'Good protection', 'Protects my phone well, though a bit bulky', TRUE),
+      (2, 2, 5, 'Must read for developers', 'Outstanding book for learning advanced concepts', TRUE),
+      (2, 4, 3, 'Decent cable', 'Works fine but seems durable', FALSE),
+      (3, 1, 4, 'Worth the price', 'Good headphones for the price point', TRUE),
+      (3, 5, 5, 'Perfect for my desk', 'Bright light and looks good on my workspace', TRUE)
+    `);
+    console.log('✅ Reviews seeded (2 Foreign Keys example)');
 
   } catch (error) {
     console.error('❌ Error seeding data:', error);
@@ -241,6 +334,10 @@ async function runSeeder() {
     console.log('- 4 transactions created');
     console.log('- 10 transaction details created');
     console.log('- 4 payment histories created');
+    console.log('\n📚 2 Foreign Keys Example:');
+    console.log('- 3 categories created');
+    console.log('- 5 products created');
+    console.log('- 6 reviews created (user_id + product_id)');
 
   } catch (error) {
     console.error('💥 Seeder failed:', error);

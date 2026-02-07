@@ -279,6 +279,58 @@ const complex = await query('transactions')
   .offset(20)
   .get();
 
+// Eager Loading with withMany() - Load related records
+// Shorthand syntax (table name = property name)
+const usersWithTransactions = await query('users')
+  .withMany('transactions', 'user_id', 'id')
+  .get();
+// Each user will have a 'transactions' array with their transaction objects
+
+// Eager loading with conditions and custom property name
+const usersWithCompletedTransactions = await query('users')
+  .withMany({'transactions': 'completedTransactions'}, 'user_id', 'id', function(q) {
+    q.where('status', 'completed')
+     .orderBy('created_at', 'DESC');
+  })
+  .where('users.status', 'active')
+  .get();
+
+// Multiple relationships
+const usersWithMultipleRelations = await query('users')
+  .withMany('transactions', 'user_id', 'id')
+  .withMany({'payment_methods': 'paymentMethods'}, 'user_id', 'id')
+  .withMany('reviews', 'user_id', 'id')
+  .get();
+
+// Nested relationships (loading relations within relations)
+const usersWithNestedRelations = await query('users')
+  .withMany('transactions', 'user_id', 'id', function(q) {
+    q.withMany('transaction_details', 'transaction_id', 'id');
+  })
+  .get();
+// users[0].transactions[0].transaction_details = [{...}, {...}]
+
+// Eager Loading with withOne() - Load single related record (one-to-one or belongs-to)
+// Shorthand syntax
+const transactionsWithUser = await query('transactions')
+  .withOne('users', 'id', 'user_id')
+  .get();
+// Each transaction will have a 'users' object (not array)
+
+// Custom property name
+const transactionsWithBuyer = await query('transactions')
+  .withOne({'users': 'buyer'}, 'id', 'user_id')
+  .get();
+// transactions[0].buyer = {...}
+
+// Mixing withOne() and withMany()
+const usersComplete = await query('users')
+  .withOne('profiles', 'user_id', 'id')
+  .withMany('transactions', 'user_id', 'id')
+  .get();
+// users[0].profiles = {...} (single object)
+// users[0].transactions = [{...}, {...}] (array)
+
 // Count and single values
 const total = await query('users').count();
 const email = await query('users').where('id', 1).value('email');
@@ -294,6 +346,10 @@ Available methods:
 - `whereNotIn(column, values)` - WHERE NOT IN condition
 - `group(callback)` - Start a grouped condition (AND logic) with callback
 - `orGroup(callback)` - Start a grouped condition (OR logic) with callback
+- `withMany('table', foreignKey, localKey, callback)` - Eager load has-many (shorthand: table = property name)
+- `withMany({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-many (custom property name)
+- `withOne('table', foreignKey, localKey, callback)` - Eager load has-one (shorthand: table = property name)
+- `withOne({'table': 'property'}, foreignKey, localKey, callback)` - Eager load has-one (custom property name)
 - `like(column, value, side)` - LIKE condition (side: 'both', 'before', 'after')
 - `orLike(column, value, side)` - OR LIKE condition
 - `search(columns, value, side)` - Search multiple columns with AND logic (side: 'both', 'before', 'after')
@@ -320,7 +376,7 @@ Available methods:
 ## Debugging Utilities
 
 ### dd() Function (Dump and Die)
-Similar to Laravel's `dd()` function for debugging:
+Similar to Laravel's `dd()` function - displays data and stops execution:
 
 ```javascript
 const { dd, dc, dump, log } = require('../utils/debug');
@@ -330,23 +386,30 @@ dd(userData, requestObject);
 
 // HTML output in browser (stops execution) - pass response object as first param
 dd(res, userData, requestObject);
+```
 
+### dc() Function (Dump and Continue)
+Similar to dd() but continues execution after showing debug output:
+
+```javascript
 // HTML output in browser (CONTINUES execution) - pass response object as first param
 dc(res, userData, requestObject);
 
-// Continue execution and dump data
-dump(userData);
-
-// Enhanced logging with timestamp
-log('User data retrieved', userData);
+// Console output (continues execution)
+dc(userData);
 ```
 
 Available functions in `utils/debug.js`:
-- `dd(res?, ...data)` - Dump and die (console output by default, HTML if res object provided)
-- `dc(res, ...data)` - Dump and continue (HTML output, stops current request execution)
-- `dump(...data)` - Dump only (continues execution)
+- `dd(res?, ...data)` - Dump and die (stops execution) - HTML if res object provided
+- `dc(res?, ...data)` - Dump and continue (continues execution) - HTML if res object provided
+- `dump(...data)` - Console dump only (continues execution)
 - `log(message, data)` - Timestamped logging
 - `pp(data)` - Pretty print JSON
+
+## Development Guidelines
+
+### After Making Changes
+When you make changes to the codebase, do not suggest running `npm run dev` to test the changes. The user will handle server restarts and testing as needed.
 
 ## File References
 - [package.json](package.json) - Dependencies and scripts

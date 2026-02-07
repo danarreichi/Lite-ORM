@@ -1,6 +1,16 @@
 const db = require('./database');
 
 /**
+ * RawSql class - Marks SQL values that should not be parameterized
+ * Used for column references and raw SQL expressions
+ */
+class RawSql {
+  constructor(value) {
+    this.value = value;
+  }
+}
+
+/**
  * QueryBuilder class - Fluent SQL query builder similar to CodeIgniter 3 Active Record
  * Provides a fluent interface for building SQL queries with method chaining.
  *
@@ -41,7 +51,8 @@ class QueryBuilder {
       limit: null,
       offset: null,
       set: null,
-      values: null
+      values: null,
+      with: []
     };
     this.parameters = [];
     return this;
@@ -175,25 +186,138 @@ class QueryBuilder {
   }
 
   /**
-   * Start a grouped condition with OR logic (callback-based)
-   * @param {function} callback - Function that receives the QueryBuilder instance
+   * Add WHERE EXISTS subquery with relation
+   * @param {string} relatedTable - The related table name
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} localKey - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the subquery
    * @returns {QueryBuilder} QueryBuilder instance for chaining
-   * @throws {Error} If callback is not a function
    *
    * @example
-   * query('users').orGroup(q => {
-   *   q.where('status', 'active').where('role', 'admin');
-   * }).orGroup(q => {
-   *   q.where('status', 'pending').where('created_at', '>', '2024-01-01');
+   * query('users').whereExistsRelation('transactions', 'user_id', 'id', function(q) {
+   *   q.where('status', 'completed');
    * })
+   * // WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.user_id = users.id AND status = 'completed')
    */
-  orGroup(callback) {
-    if (typeof callback !== 'function') {
-      throw new Error('orGroup() requires a callback function');
+  whereExistsRelation(relatedTable, foreignKey, localKey = 'id', callback = null) {
+    // Create a sub-query builder for the EXISTS clause
+    const subQuery = new QueryBuilder();
+    subQuery.select('1').from(relatedTable);
+    // Use RawSql to prevent the column reference from being parameterized
+    subQuery.where(`${relatedTable}.${foreignKey}`, new RawSql(`${this.query.table}.${localKey}`));
+
+    // Add additional conditions if callback provided
+    if (callback && typeof callback === 'function') {
+      callback(subQuery);
     }
-    this.query.where.push({ type: 'GROUP_START', groupType: 'OR' });
-    callback(this);
-    this.query.where.push({ type: 'GROUP_END' });
+
+    // Add EXISTS condition to where array
+    this.query.where.push({
+      type: 'EXISTS',
+      subQuery: subQuery,
+      relation: { relatedTable, foreignKey, localKey }
+    });
+
+    return this;
+  }
+
+  /**
+   * Eager load has-many relationship (one-to-many)
+   * Uses two-query approach to load related records efficiently
+   * 
+   * @param {string|object} relation - Table name (string) or object mapping {relatedTable: relationName}
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} [localKey='id'] - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the related query
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Shorthand - table name as relation name
+   * const users = await query('users')
+   *   .withMany('transactions', 'user_id', 'id')
+   *   .get();
+   * // users[0].transactions = [{...}, {...}]
+   * 
+   * @example
+   * // Custom relation name
+   * const users = await query('users')
+   *   .withMany({'transactions': 'completedTransactions'}, 'user_id', 'id', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].completedTransactions = [{...}, {...}]
+   */
+  withMany(relation, foreignKey, localKey = 'id', callback = null) {
+    let relatedTable, relationName;
+    
+    // Check if relation is a string (shorthand) or object (explicit mapping)
+    if (typeof relation === 'string') {
+      // Shorthand: use same name for both table and property
+      relatedTable = relation;
+      relationName = relation;
+    } else {
+      // Object mapping: extract table and relation name
+      relatedTable = Object.keys(relation)[0];
+      relationName = relation[relatedTable];
+    }
+    
+    this.query.with.push({
+      type: 'hasMany',
+      relationName,
+      relatedTable,
+      foreignKey,
+      localKey,
+      callback
+    });
+    return this;
+  }
+
+  /**
+   * Eager load has-one relationship (one-to-one or belongs-to)
+   * Uses two-query approach to load single related record efficiently
+   * 
+   * @param {string|object} relation - Table name (string) or object mapping {relatedTable: relationName}
+   * @param {string} foreignKey - Foreign key column in related table
+   * @param {string} [localKey='id'] - Local key column (defaults to 'id')
+   * @param {function} [callback] - Optional callback to add conditions to the related query
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * // Shorthand - table name as relation name
+   * const users = await query('users')
+   *   .withOne('profile', 'user_id', 'id')
+   *   .get();
+   * // users[0].profile = {...}
+   * 
+   * @example
+   * // Custom relation name
+   * const transactions = await query('transactions')
+   *   .withOne({'users': 'buyer'}, 'id', 'user_id')
+   *   .get();
+   * // transactions[0].buyer = {...}
+   */
+  withOne(relation, foreignKey, localKey = 'id', callback = null) {
+    let relatedTable, relationName;
+    
+    // Check if relation is a string (shorthand) or object (explicit mapping)
+    if (typeof relation === 'string') {
+      // Shorthand: use same name for both table and property
+      relatedTable = relation;
+      relationName = relation;
+    } else {
+      // Object mapping: extract table and relation name
+      relatedTable = Object.keys(relation)[0];
+      relationName = relation[relatedTable];
+    }
+    
+    this.query.with.push({
+      type: 'hasOne',
+      relationName,
+      relatedTable,
+      foreignKey,
+      localKey,
+      callback
+    });
     return this;
   }
 
@@ -443,37 +567,48 @@ class QueryBuilder {
 
     let sql = ' WHERE ';
     let groupLevel = 0;
-    let previousGroupType = null;
+    let conditionsInGroup = [0]; // Track conditions per group level
 
     this.query.where.forEach((condition, index) => {
       if (condition.type === 'GROUP_START') {
-        // Add AND/OR before group if not the first condition
-        if (index > 0 && groupLevel === 0) {
-          sql += ` ${previousGroupType || 'AND'} `;
+        // Add AND/OR before group if not the first condition at root level
+        if (groupLevel === 0 && index > 0) {
+          sql += ` ${this.query.where[index - 1].groupType || 'AND'} `;
         }
         sql += '(';
         groupLevel++;
-        previousGroupType = condition.groupType;
+        conditionsInGroup.push(0);
       } else if (condition.type === 'GROUP_END') {
         sql += ')';
         groupLevel--;
+        conditionsInGroup.pop();
+      } else if (condition.type === 'EXISTS') {
+        // Add AND/OR if this is not the first condition in current group
+        if (conditionsInGroup[groupLevel] > 0) {
+          sql += ' AND ';
+        }
+        conditionsInGroup[groupLevel]++;
+
+        // Build the EXISTS subquery
+        const subSql = condition.subQuery.buildSql();
+        sql += `EXISTS (${subSql})`;
+        // Add subquery parameters to main parameters array
+        this.parameters.push(...condition.subQuery.parameters);
       } else {
         // Regular condition
-        if (index > 0) {
-          // Check if we're inside a group or not
-          if (groupLevel > 0) {
-            // Inside group, use the condition's type
-            sql += ` ${condition.type} `;
-          } else {
-            // Outside group, use previous group type or AND
-            sql += ` ${previousGroupType || 'AND'} `;
-          }
+        // Add AND/OR if this is not the first condition in current group
+        if (conditionsInGroup[groupLevel] > 0) {
+          sql += ` ${condition.type} `;
         }
+        conditionsInGroup[groupLevel]++;
 
         if (condition.operator === 'IN' || condition.operator === 'NOT IN') {
           const placeholders = condition.value.map(() => '?').join(', ');
           sql += `${condition.column} ${condition.operator} (${placeholders})`;
           this.parameters.push(...condition.value);
+        } else if (condition.value instanceof RawSql) {
+          // For raw SQL values (like column references), use directly without parameterizing
+          sql += `${condition.column} ${condition.operator} ${condition.value.value}`;
         } else {
           sql += `${condition.column} ${condition.operator} ?`;
           this.parameters.push(condition.value);
@@ -510,6 +645,11 @@ class QueryBuilder {
    * @returns {string} Complete SQL query
    */
   buildSql() {
+    // If no type is set, default to SELECT
+    if (!this.query.type) {
+      this.query.type = 'SELECT';
+    }
+
     let sql = '';
 
     switch (this.query.type) {
@@ -574,21 +714,103 @@ class QueryBuilder {
 
   /**
    * Execute SELECT query and return results
-   * @returns {Promise<object>} Query result with rows array
+   * @returns {Promise<any[]>} Array of result rows
    *
    * @example
-   * const result = await query('users').where('active', 1).get();
-   * console.log(result.rows); // Array of user objects
+   * const users = await query('users').where('active', 1).get();
+   * console.log(users); // Array of user objects
    */
   async get() {
-    // If no type is set, assume SELECT
-    if (!this.query.type) {
-      this.query.type = 'SELECT';
-    }
     const sql = this.buildSql();
     const result = await db.query(sql, this.parameters);
+    let rows = result.rows;
+    
+    // Process eager loaded relationships (two-query approach like Laravel)
+    if (this.query.with.length > 0 && rows.length > 0) {
+      rows = await this._loadRelations(rows, this.query.with);
+    }
+    
     this.reset(); // Reset for next query
-    return result;
+    return rows;
+  }
+
+  /**
+   * Load relations recursively (supports nested eager loading)
+   * @private
+   * @param {array} rows - Parent records
+   * @param {array} relations - Relations to load
+   * @returns {Promise<array>} Rows with loaded relations
+   */
+  async _loadRelations(rows, relations) {
+    for (const relation of relations) {
+      // Get the local key values from parent records
+      const localKeyValues = rows.map(row => row[relation.localKey]).filter(val => val != null);
+      
+      if (localKeyValues.length === 0) {
+        // No valid keys, set empty value based on relation type
+        rows.forEach(row => {
+          row[relation.relationName] = relation.type === 'hasOne' ? null : [];
+        });
+        continue;
+      }
+      
+      // Build query for related records
+      const relatedQuery = new QueryBuilder();
+      relatedQuery.from(relation.relatedTable);
+      relatedQuery.whereIn(relation.foreignKey, localKeyValues);
+      
+      // Apply callback conditions and capture nested withMany/withOne calls
+      if (relation.callback && typeof relation.callback === 'function') {
+        relation.callback(relatedQuery);
+      }
+      
+      // Fetch related records
+      const relatedSql = relatedQuery.buildSql();
+      const relatedResult = await db.query(relatedSql, relatedQuery.parameters);
+      let relatedRecords = relatedResult.rows;
+      
+      // Process nested relations if any were defined in the callback
+      if (relatedQuery.query.with.length > 0 && relatedRecords.length > 0) {
+        relatedRecords = await this._loadRelations(relatedRecords, relatedQuery.query.with);
+      }
+      
+      if (relation.type === 'hasOne') {
+        // For hasOne: create map of foreignKey -> single record (first match)
+        const mappedRelated = {};
+        relatedRecords.forEach(record => {
+          const fk = record[relation.foreignKey];
+          if (!mappedRelated[fk]) {
+            mappedRelated[fk] = record; // Only take first match
+          }
+        });
+        
+        // Attach single related record to parent records
+        rows = rows.map(row => {
+          const localKeyValue = row[relation.localKey];
+          row[relation.relationName] = mappedRelated[localKeyValue] || null;
+          return row;
+        });
+      } else {
+        // For hasMany: group related records by foreign key
+        const groupedRelated = {};
+        relatedRecords.forEach(record => {
+          const fk = record[relation.foreignKey];
+          if (!groupedRelated[fk]) {
+            groupedRelated[fk] = [];
+          }
+          groupedRelated[fk].push(record);
+        });
+        
+        // Attach related records array to parent records
+        rows = rows.map(row => {
+          const localKeyValue = row[relation.localKey];
+          row[relation.relationName] = groupedRelated[localKeyValue] || [];
+          return row;
+        });
+      }
+    }
+    
+    return rows;
   }
 
   /**
@@ -599,8 +821,8 @@ class QueryBuilder {
    * const user = await query('users').where('id', 1).first();
    */
   async first() {
-    const result = await this.get();
-    return result.rows[0] || null;
+    const rows = await this.get();
+    return rows[0] || null;
   }
 
   /**
@@ -612,9 +834,9 @@ class QueryBuilder {
    * const email = await query('users').where('id', 1).value('email');
    */
   async value(column) {
-    const result = await this.get();
-    if (result.rows.length > 0) {
-      return result.rows[0][column];
+    const rows = await this.get();
+    if (rows.length > 0) {
+      return rows[0][column];
     }
     return null;
   }
@@ -697,4 +919,4 @@ function query(table = null) {
   return qb;
 }
 
-module.exports = { QueryBuilder, query };
+module.exports = { QueryBuilder, query, RawSql };
