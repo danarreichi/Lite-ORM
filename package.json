@@ -9,7 +9,7 @@
     "test": "node tests/runAll.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "Danar Ardiwinanto <danar.ardiwinanto@gmail.com>",
   "license": "ISC",
   "description": "",
   "dependencies": {
