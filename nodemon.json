@@ -1,0 +1,10 @@
+{
+  "watch": ["index.js", "routes/", "controllers/", "utils/", "views/"],
+  "ignore": ["node_modules/", "*.log", ".git/", "package-lock.json"],
+  "ext": "js,json,ejs",
+  "delay": 500,
+  "verbose": true,
+  "env": {
+    "NODE_ENV": "development"
+  }
+}
