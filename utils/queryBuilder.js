@@ -149,6 +149,36 @@ class QueryBuilder {
   }
 
   /**
+   * Validate SQL operator against allowed list
+   * @private
+   * @param {string} operator - Operator to validate
+   * @param {string[]} validOperators - Allowed operators
+   */
+  #validateOperator(operator, validOperators) {
+    if (!validOperators.includes(operator)) {
+      throw new Error(`Invalid operator: ${operator}`);
+    }
+  }
+
+  /**
+   * Add WHERE condition with aggregate alias auto-detection
+   * @private
+   * @param {string} column - Column name or aggregate alias
+   * @param {string} operator - Comparison operator
+   * @param {any} value - Comparison value
+   * @param {'AND'|'OR'} logicType - Condition logic type
+   */
+  #addWhereCondition(column, operator, value, logicType) {
+    const aggregate = this.#query.aggregates.find(agg => agg.alias === column);
+
+    if (aggregate) {
+      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, value, logicType));
+    } else {
+      this.#query.where.push({ column, operator, value, type: logicType });
+    }
+  }
+
+  /**
    * Add WHERE condition with AND logic
    * @param {string} column - Column name
    * @param {string|any} operator - Operator or value (if value is null, operator becomes value)
@@ -175,22 +205,9 @@ class QueryBuilder {
       operator = '=';
     }
 
-    // Validate operator
     const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT'];
-    if (!validOperators.includes(operator)) {
-      throw new Error(`Invalid operator: ${operator}`);
-    }
-
-    // Check if column matches any aggregate alias
-    const aggregate = this.#query.aggregates.find(agg => agg.alias === column);
-
-    if (aggregate) {
-      // Use helper to build aggregate subquery
-      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, value, 'AND'));
-    } else {
-      // Normal WHERE condition
-      this.#query.where.push({ column, operator, value, type: 'AND' });
-    }
+    this.#validateOperator(operator, validOperators);
+    this.#addWhereCondition(column, operator, value, 'AND');
 
     return this;
   }
@@ -210,9 +227,7 @@ class QueryBuilder {
     this.#validateColumnName(secondColumn, 'WHERE');
 
     const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<='];
-    if (!validOperators.includes(operator)) {
-      throw new Error(`Invalid operator: ${operator}`);
-    }
+    this.#validateOperator(operator, validOperators);
 
     this.#query.where.push({
       column: firstColumn,
@@ -235,9 +250,7 @@ class QueryBuilder {
     this.#validateColumnName(secondColumn, 'WHERE');
 
     const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<='];
-    if (!validOperators.includes(operator)) {
-      throw new Error(`Invalid operator: ${operator}`);
-    }
+    this.#validateOperator(operator, validOperators);
 
     this.#query.where.push({
       column: firstColumn,
@@ -323,22 +336,9 @@ class QueryBuilder {
       operator = '=';
     }
 
-    // Validate operator
     const validOperators = ['=', '!=', '<>', '>', '<', '>=', '<=', 'LIKE', 'NOT LIKE', 'IS', 'IS NOT'];
-    if (!validOperators.includes(operator)) {
-      throw new Error(`Invalid operator: ${operator}`);
-    }
-
-    // Check if column matches any aggregate alias
-    const aggregate = this.#query.aggregates.find(agg => agg.alias === column);
-
-    if (aggregate) {
-      // Use helper to build aggregate subquery
-      this.#query.where.push(this.#buildAggregateSubquery(aggregate, operator, value, 'OR'));
-    } else {
-      // Normal OR WHERE condition
-      this.#query.where.push({ column, operator, value, type: 'OR' });
-    }
+    this.#validateOperator(operator, validOperators);
+    this.#addWhereCondition(column, operator, value, 'OR');
 
     return this;
   }
@@ -908,6 +908,33 @@ class QueryBuilder {
   }
 
   /**
+   * Register aggregate definition for SELECT subquery aggregate
+   * @private
+   * @param {'SUM'|'COUNT'|'AVG'|'MAX'|'MIN'} aggregateType - Aggregate type
+   * @param {string|object} relatedTable - Table name or {table: alias}
+   * @param {string|string[]} foreignKey - Related table foreign key(s)
+   * @param {string|string[]} localKey - Current table local key(s)
+   * @param {string|null} column - Aggregate column (null for COUNT)
+   * @param {function|null} callback - Optional related query callback
+   * @returns {QueryBuilder} QueryBuilder instance
+   */
+  #registerAggregate(aggregateType, relatedTable, foreignKey, localKey, column, callback = null) {
+    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, aggregateType);
+
+    this.#query.aggregates.push({
+      type: aggregateType,
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column: aggregateType === 'COUNT' ? '*' : column,
+      alias,
+      callback
+    });
+
+    return this;
+  }
+
+  /**
    * Build aggregate subquery for WHERE filtering
    * @private
    * @param {object} aggregate - Aggregate definition object
@@ -1034,18 +1061,7 @@ class QueryBuilder {
    * // orders[0].order_items_total_price_sum = 299.99
    */
   withSum(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'SUM');
-
-    this.#query.aggregates.push({
-      type: 'SUM',
-      relatedTable: table,
-      foreignKey,
-      localKey,
-      column,
-      alias: alias,
-      callback
-    });
-    return this;
+    return this.#registerAggregate('SUM', relatedTable, foreignKey, localKey, column, callback);
   }
 
   /**
@@ -1080,18 +1096,7 @@ class QueryBuilder {
    * // orders[0].order_items_count = 3
    */
   withCount(relatedTable, foreignKey, localKey, callback = null) {
-    const { table, alias } = this.#parseAggregateAlias(relatedTable, null, 'COUNT');
-
-    this.#query.aggregates.push({
-      type: 'COUNT',
-      relatedTable: table,
-      foreignKey,
-      localKey,
-      column: '*',
-      alias: alias,
-      callback
-    });
-    return this;
+    return this.#registerAggregate('COUNT', relatedTable, foreignKey, localKey, null, callback);
   }
 
   /**
@@ -1127,18 +1132,7 @@ class QueryBuilder {
    * // orders[0].order_items_unit_price_avg = 49.99
    */
   withAvg(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'AVG');
-
-    this.#query.aggregates.push({
-      type: 'AVG',
-      relatedTable: table,
-      foreignKey,
-      localKey,
-      column,
-      alias: alias,
-      callback
-    });
-    return this;
+    return this.#registerAggregate('AVG', relatedTable, foreignKey, localKey, column, callback);
   }
 
   /**
@@ -1174,18 +1168,7 @@ class QueryBuilder {
    * // orders[0].order_items_total_price_max = 199.99
    */
   withMax(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'MAX');
-
-    this.#query.aggregates.push({
-      type: 'MAX',
-      relatedTable: table,
-      foreignKey,
-      localKey,
-      column,
-      alias: alias,
-      callback
-    });
-    return this;
+    return this.#registerAggregate('MAX', relatedTable, foreignKey, localKey, column, callback);
   }
 
   /**
@@ -1221,18 +1204,7 @@ class QueryBuilder {
    * // orders[0].order_items_unit_price_min = 12.99
    */
   withMin(relatedTable, foreignKey, localKey, column, callback = null) {
-    const { table, alias } = this.#parseAggregateAlias(relatedTable, column, 'MIN');
-
-    this.#query.aggregates.push({
-      type: 'MIN',
-      relatedTable: table,
-      foreignKey,
-      localKey,
-      column,
-      alias: alias,
-      callback
-    });
-    return this;
+    return this.#registerAggregate('MIN', relatedTable, foreignKey, localKey, column, callback);
   }
 
   /**
@@ -1962,6 +1934,55 @@ class QueryBuilder {
   }
 
   /**
+   * Shared chunk loop runner for offset-based and ID-based chunking
+   * @private
+   * @param {number} size - Chunk size
+   * @param {function} callback - Per-chunk callback
+   * @param {function} setupIteration - Called before each query
+   * @param {function|null} continueIteration - Called when loop continues to next page
+   * @returns {Promise<boolean>} True when processing completes
+   */
+  async #runChunkLoop(size, callback, setupIteration, continueIteration = null) {
+    let page = 0;
+
+    while (true) {
+      this.#parameters = [];
+
+      if (setupIteration) {
+        await setupIteration(page);
+      }
+
+      this.#query.limit = size;
+
+      const sql = this.buildSql();
+      const result = await this.#executor.query(sql, this.#parameters);
+      let rows = result.rows;
+      rows = await this.#postProcessRows(rows);
+
+      if (rows.length === 0) {
+        break;
+      }
+
+      const shouldContinue = await callback(rows, page);
+      if (shouldContinue === false) {
+        break;
+      }
+
+      if (rows.length < size) {
+        break;
+      }
+
+      if (continueIteration) {
+        await continueIteration(rows, page);
+      }
+
+      page++;
+    }
+
+    return true;
+  }
+
+  /**
    * Execute SELECT query and return results
    * @returns {Promise<any[]>} Array of result rows
    *
@@ -2015,47 +2036,18 @@ class QueryBuilder {
       throw new Error('chunk() size must be a positive integer');
     }
 
-    let page = 0;
-
     // Save the original limit and offset
     const originalLimit = this.#query.limit;
     const originalOffset = this.#query.offset;
 
     try {
-      while (true) {
-        // Reset parameters for each iteration
-        this.#parameters = [];
-
-        // Set pagination for this chunk
-        this.#query.limit = size;
-        this.#query.offset = page * size;
-
-        // Execute query
-        const sql = this.buildSql();
-        const result = await this.#executor.query(sql, this.#parameters);
-        let rows = result.rows;
-        rows = await this.#postProcessRows(rows);
-
-        // No more rows, we're done
-        if (rows.length === 0) {
-          break;
+      await this.#runChunkLoop(
+        size,
+        callback,
+        async (page) => {
+          this.#query.offset = page * size;
         }
-
-        // Execute callback with chunk and page number
-        const shouldContinue = await callback(rows, page);
-
-        // If callback returns false, stop chunking
-        if (shouldContinue === false) {
-          break;
-        }
-
-        // If we got fewer rows than chunk size, we're done
-        if (rows.length < size) {
-          break;
-        }
-
-        page++;
-      }
+      );
     } finally {
       // Restore original values and reset
       this.#query.limit = originalLimit;
@@ -2110,7 +2102,6 @@ class QueryBuilder {
       throw new Error('chunkById() size must be a positive integer');
     }
 
-    let page = 0;
     let lastId = null;
 
     // Save original values
@@ -2131,55 +2122,24 @@ class QueryBuilder {
         this.#query.orderBy.push({ column: fullColumn, direction: 'ASC' });
       }
 
-      while (true) {
-        // Reset parameters for each iteration
-        this.#parameters = [];
-
-        // Set WHERE condition for ID-based pagination
-        if (lastId !== null) {
-          this.#query.where.push({
-            column: fullColumn,
-            operator: '>',
-            value: lastId,
-            type: 'AND'
-          });
+      await this.#runChunkLoop(
+        size,
+        callback,
+        async () => {
+          if (lastId !== null) {
+            this.#query.where.push({
+              column: fullColumn,
+              operator: '>',
+              value: lastId,
+              type: 'AND'
+            });
+          }
+        },
+        async (rows) => {
+          lastId = rows[rows.length - 1][column];
+          this.#query.where = [...originalWhere];
         }
-
-        // Set limit for this chunk
-        this.#query.limit = size;
-
-        // Execute query
-        const sql = this.buildSql();
-        const result = await this.#executor.query(sql, this.#parameters);
-        let rows = result.rows;
-        rows = await this.#postProcessRows(rows);
-
-        // No more rows, we're done
-        if (rows.length === 0) {
-          break;
-        }
-
-        // Get the last ID from this chunk for next iteration
-        lastId = rows[rows.length - 1][column];
-
-        // Execute callback with chunk and page number
-        const shouldContinue = await callback(rows, page);
-
-        // If callback returns false, stop chunking
-        if (shouldContinue === false) {
-          break;
-        }
-
-        // If we got fewer rows than chunk size, we're done
-        if (rows.length < size) {
-          break;
-        }
-
-        // Reset where conditions for next iteration (keep original conditions)
-        this.#query.where = [...originalWhere];
-
-        page++;
-      }
+      );
     } finally {
       // Restore original values and reset
       this.#query.limit = originalLimit;
