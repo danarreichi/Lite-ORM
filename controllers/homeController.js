@@ -23,6 +23,15 @@ const homeController = {
     // =============================================
     // COMPOSITE KEYS EXAMPLES
     // =============================================
+
+    var testChunk = [];
+    await query('users')
+        .withMany('transactions', 'user_id', 'id')
+        .chunk(2, async (users, page) => {
+          users.forEach(function(user) {
+            testChunk.push(user);
+          });
+        });
     
     // Example 1: Load users with their reviews (using composite keys)
     // Reviews table has both user_id and product_id foreign keys
@@ -239,7 +248,8 @@ const homeController = {
       '--- OTHER EXAMPLES ---': null,
       'Example 5 - Transactions with Details & Products': example5,
       'Example 6 - Users who reviewed Product 1 (rating >= 4)': example6,
-      'Example 7 - All Reviews with User & Product Details': example7
+      'Example 7 - All Reviews with User & Product Details': example7,
+      'Example 8 - Chunk Test': testChunk
     });
   }
 };

@@ -801,10 +801,14 @@ async function testChunk() {
   let totalRows = 0;
   
   await query('users')
+    .withMany('transactions', 'user_id', 'id')
     .chunk(2, async (rows, page) => {
       processedPages++;
       totalRows += rows.length;
       assert(rows.length <= 2, `chunk(): Page ${page} has <= 2 rows`);
+      rows.forEach(row => {
+        assert(Array.isArray(row.transactions), `chunk(): Page ${page} includes eager-loaded transactions array`);
+      });
     });
   
   assert(processedPages > 0, 'chunk(): Processed pages');

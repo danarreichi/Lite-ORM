@@ -1971,7 +1971,7 @@ class QueryBuilder {
   /**
    * Process query results in chunks to avoid memory issues with large datasets
    * Similar to Laravel's chunk() method - processes records in batches
-   * Note: Eager loading (withMany/withOne) is NOT applied in chunk mode for memory efficiency
+    * Eager loading (withMany/withOne) and aggregate casting are applied per chunk
    * 
    * @param {number} size - Number of records per chunk
    * @param {function} callback - Function to process each chunk (receives rows and page number)
@@ -2019,10 +2019,39 @@ class QueryBuilder {
         this.#query.limit = size;
         this.#query.offset = page * size;
 
-        // Execute query (without eager loading to keep memory efficient)
+        // Execute query
         const sql = this.buildSql();
         const result = await this.#executor.query(sql, this.#parameters);
-        const rows = result.rows;
+        let rows = result.rows;
+
+        // Convert aggregate results to numbers (MySQL returns strings for aggregates)
+        if (this.#query.aggregates.length > 0 && rows.length > 0) {
+          rows = rows.map(row => {
+            const newRow = { ...row };
+            this.#query.aggregates.forEach(agg => {
+              if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
+                newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
+              }
+            });
+            return newRow;
+          });
+        }
+
+        // Process eager loaded relationships for this chunk
+        if (this.#query.with.length > 0 && rows.length > 0) {
+          rows = await this.#loadRelations(rows, this.#query.with);
+        }
+
+        // Remove auto-added columns from results if they weren't explicitly selected
+        if (this.#query.autoAddedColumns.length > 0 && rows.length > 0) {
+          rows = rows.map(row => {
+            const cleanRow = { ...row };
+            this.#query.autoAddedColumns.forEach(col => {
+              delete cleanRow[col];
+            });
+            return cleanRow;
+          });
+        }
 
         // No more rows, we're done
         if (rows.length === 0) {
@@ -2058,7 +2087,7 @@ class QueryBuilder {
    * Process query results in chunks using ID-based pagination (more efficient than offset)
    * Similar to Laravel's chunkById() - uses WHERE id > lastId instead of OFFSET
    * This is more efficient for very large datasets as it avoids OFFSET performance issues
-   * Note: Eager loading (withMany/withOne) is NOT applied in chunk mode for memory efficiency
+    * Eager loading (withMany/withOne) and aggregate casting are applied per chunk
    * 
    * @param {number} size - Number of records per chunk
    * @param {function} callback - Function to process each chunk (receives rows and page number)
@@ -2136,10 +2165,39 @@ class QueryBuilder {
         // Set limit for this chunk
         this.#query.limit = size;
 
-        // Execute query (without eager loading to keep memory efficient)
+        // Execute query
         const sql = this.buildSql();
         const result = await this.#executor.query(sql, this.#parameters);
-        const rows = result.rows;
+        let rows = result.rows;
+
+        // Convert aggregate results to numbers (MySQL returns strings for aggregates)
+        if (this.#query.aggregates.length > 0 && rows.length > 0) {
+          rows = rows.map(row => {
+            const newRow = { ...row };
+            this.#query.aggregates.forEach(agg => {
+              if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
+                newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
+              }
+            });
+            return newRow;
+          });
+        }
+
+        // Process eager loaded relationships for this chunk
+        if (this.#query.with.length > 0 && rows.length > 0) {
+          rows = await this.#loadRelations(rows, this.#query.with);
+        }
+
+        // Remove auto-added columns from results if they weren't explicitly selected
+        if (this.#query.autoAddedColumns.length > 0 && rows.length > 0) {
+          rows = rows.map(row => {
+            const cleanRow = { ...row };
+            this.#query.autoAddedColumns.forEach(col => {
+              delete cleanRow[col];
+            });
+            return cleanRow;
+          });
+        }
 
         // No more rows, we're done
         if (rows.length === 0) {
