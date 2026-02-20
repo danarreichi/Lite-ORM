@@ -26,7 +26,12 @@ const homeController = {
 
     var testChunk = [];
     await query('users')
-        .withMany('transactions', 'user_id', 'id')
+        .withMany('transactions', 'user_id', 'id', function(q) {
+          q.orderBy('id', 'desc');
+        })
+        .withOne({'transactions' : 'transaction_one'}, 'user_id', 'id', function(q) {
+          q.orderBy('id', 'desc');
+        })
         .chunk(2, async (users, page) => {
           users.forEach(function(user) {
             testChunk.push(user);
