@@ -1923,18 +1923,12 @@ class QueryBuilder {
   }
 
   /**
-   * Execute SELECT query and return results
-   * @returns {Promise<any[]>} Array of result rows
-   *
-   * @example
-   * const users = await query('users').where('active', 1).get();
-   * console.log(users); // Array of user objects
+   * Apply common row post-processing after SELECT execution
+   * @private
+   * @param {any[]} rows - Raw query result rows
+   * @returns {Promise<any[]>} Processed rows
    */
-  async get() {
-    const sql = this.buildSql();
-    const result = await this.#executor.query(sql, this.#parameters);
-    let rows = result.rows;
-
+  async #postProcessRows(rows) {
     // Convert aggregate results to numbers (MySQL returns strings for aggregates)
     if (this.#query.aggregates.length > 0 && rows.length > 0) {
       rows = rows.map(row => {
@@ -1963,6 +1957,23 @@ class QueryBuilder {
         return cleanRow;
       });
     }
+
+    return rows;
+  }
+
+  /**
+   * Execute SELECT query and return results
+   * @returns {Promise<any[]>} Array of result rows
+   *
+   * @example
+   * const users = await query('users').where('active', 1).get();
+   * console.log(users); // Array of user objects
+   */
+  async get() {
+    const sql = this.buildSql();
+    const result = await this.#executor.query(sql, this.#parameters);
+    let rows = result.rows;
+    rows = await this.#postProcessRows(rows);
 
     this.#reset(); // Reset for next query
     return rows;
@@ -2023,35 +2034,7 @@ class QueryBuilder {
         const sql = this.buildSql();
         const result = await this.#executor.query(sql, this.#parameters);
         let rows = result.rows;
-
-        // Convert aggregate results to numbers (MySQL returns strings for aggregates)
-        if (this.#query.aggregates.length > 0 && rows.length > 0) {
-          rows = rows.map(row => {
-            const newRow = { ...row };
-            this.#query.aggregates.forEach(agg => {
-              if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
-                newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
-              }
-            });
-            return newRow;
-          });
-        }
-
-        // Process eager loaded relationships for this chunk
-        if (this.#query.with.length > 0 && rows.length > 0) {
-          rows = await this.#loadRelations(rows, this.#query.with);
-        }
-
-        // Remove auto-added columns from results if they weren't explicitly selected
-        if (this.#query.autoAddedColumns.length > 0 && rows.length > 0) {
-          rows = rows.map(row => {
-            const cleanRow = { ...row };
-            this.#query.autoAddedColumns.forEach(col => {
-              delete cleanRow[col];
-            });
-            return cleanRow;
-          });
-        }
+        rows = await this.#postProcessRows(rows);
 
         // No more rows, we're done
         if (rows.length === 0) {
@@ -2169,35 +2152,7 @@ class QueryBuilder {
         const sql = this.buildSql();
         const result = await this.#executor.query(sql, this.#parameters);
         let rows = result.rows;
-
-        // Convert aggregate results to numbers (MySQL returns strings for aggregates)
-        if (this.#query.aggregates.length > 0 && rows.length > 0) {
-          rows = rows.map(row => {
-            const newRow = { ...row };
-            this.#query.aggregates.forEach(agg => {
-              if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
-                newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
-              }
-            });
-            return newRow;
-          });
-        }
-
-        // Process eager loaded relationships for this chunk
-        if (this.#query.with.length > 0 && rows.length > 0) {
-          rows = await this.#loadRelations(rows, this.#query.with);
-        }
-
-        // Remove auto-added columns from results if they weren't explicitly selected
-        if (this.#query.autoAddedColumns.length > 0 && rows.length > 0) {
-          rows = rows.map(row => {
-            const cleanRow = { ...row };
-            this.#query.autoAddedColumns.forEach(col => {
-              delete cleanRow[col];
-            });
-            return cleanRow;
-          });
-        }
+        rows = await this.#postProcessRows(rows);
 
         // No more rows, we're done
         if (rows.length === 0) {
