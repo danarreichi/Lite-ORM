@@ -29,7 +29,7 @@ A fluent SQL query builder for Node.js inspired by CodeIgniter 3's Active Record
 - **Fluent Interface**: Chain methods for readable query construction
 - **Automatic Parameterization**: SQL injection protection built-in
 - **Eager Loading**: Load relationships efficiently (withMany, withOne)
-- **Aggregate Functions**: withSum, withCount, withAvg, withMax, withMin
+- **Aggregate Functions**: withSum, withCount, withAvg, withMax, withMin, withCustom
 - **Composite Keys**: Full support for multi-column primary/foreign keys
 - **Chunking**: Process large datasets in batches
 - **Advanced Filtering**: GROUP BY, HAVING, EXISTS subqueries
@@ -434,6 +434,43 @@ const users = await query('users')
   .get();
 // users[0].transactions_amount_max = 10000
 // users[0].transactions_amount_min = 100
+```
+
+### withCustom() - Custom Aggregate Expression
+
+```javascript
+const users = await query('users')
+  .withCustom(
+    {'transactions': 'avg_ticket'},
+    'user_id',
+    'id',
+    'SUM(total_amount) / COUNT(total_amount)'
+  )
+  .get();
+// users[0].avg_ticket = 250
+```
+
+Custom aggregate aliases can be filtered like other aggregates:
+
+```javascript
+const users = await query('users')
+  .withCustom({'transactions': 'avg_ticket'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+  .where('avg_ticket', '>', 100)
+  .get();
+```
+
+### joinCustom() - JOIN-based Custom Aggregate Expression
+
+```javascript
+const users = await query('users')
+  .joinCustom(
+    {'transactions': 'avg_ticket_join'},
+    'user_id',
+    'id',
+    'SUM(total_amount) / COUNT(total_amount)'
+  )
+  .where('avg_ticket_join', '>', 100)
+  .get();
 ```
 
 ### Multiple Aggregates
@@ -986,6 +1023,13 @@ dd(users);  // Dumps users array and stops execution
 | `withAvg(table, fk, lk, column, callback)` | Add AVG aggregate |
 | `withMax(table, fk, lk, column, callback)` | Add MAX aggregate |
 | `withMin(table, fk, lk, column, callback)` | Add MIN aggregate |
+| `withCustom(table, fk, lk, expression, callback)` | Add custom aggregate expression |
+| `joinSum(table, fk, lk, column, callback)` | Add JOIN-based SUM aggregate |
+| `joinCount(table, fk, lk, callback)` | Add JOIN-based COUNT aggregate |
+| `joinAvg(table, fk, lk, column, callback)` | Add JOIN-based AVG aggregate |
+| `joinMax(table, fk, lk, column, callback)` | Add JOIN-based MAX aggregate |
+| `joinMin(table, fk, lk, column, callback)` | Add JOIN-based MIN aggregate |
+| `joinCustom(table, fk, lk, expression, callback)` | Add JOIN-based custom aggregate expression |
 
 ### Search & LIKE
 

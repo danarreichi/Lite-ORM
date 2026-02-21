@@ -164,6 +164,25 @@ class QueryBuilder {
   }
 
   /**
+   * Validate custom aggregate SQL expression
+   * @private
+   * @param {string} expression - SQL aggregate expression (trusted code only)
+   */
+  #validateAggregateExpression(expression) {
+    if (typeof expression !== "string" || expression.trim().length === 0) {
+      throw new Error("Custom aggregate expression must be a non-empty string");
+    }
+
+    if (/;|--|\/\*/.test(expression)) {
+      throw new Error("Custom aggregate expression contains invalid SQL tokens");
+    }
+
+    if (!/^[a-zA-Z0-9_.,`()+\-*/\s]+$/.test(expression)) {
+      throw new Error("Custom aggregate expression contains invalid characters");
+    }
+  }
+
+  /**
    * Add WHERE condition with aggregate alias auto-detection
    * @private
    * @param {string} column - Column name or aggregate alias
@@ -1079,6 +1098,8 @@ class QueryBuilder {
       let alias;
       if (aggregateType === "COUNT") {
         alias = `${relatedTable}_count`;
+      } else if (aggregateType === "CUSTOM") {
+        alias = `${relatedTable}_custom`;
       } else {
         alias = `${relatedTable}_${column}_${aggregateType.toLowerCase()}`;
       }
@@ -1093,12 +1114,13 @@ class QueryBuilder {
   /**
    * Register aggregate definition for SELECT subquery aggregate
    * @private
-   * @param {'SUM'|'COUNT'|'AVG'|'MAX'|'MIN'} aggregateType - Aggregate type
+   * @param {'SUM'|'COUNT'|'AVG'|'MAX'|'MIN'|'CUSTOM'} aggregateType - Aggregate type
    * @param {string|object} relatedTable - Table name or {table: alias}
    * @param {string|string[]} foreignKey - Related table foreign key(s)
    * @param {string|string[]} localKey - Current table local key(s)
    * @param {string|null} column - Aggregate column (null for COUNT)
    * @param {function|null} callback - Optional related query callback
+   * @param {string|null} expression - Custom SQL expression for CUSTOM aggregate
    * @returns {QueryBuilder} QueryBuilder instance
    */
   #registerAggregate(
@@ -1108,6 +1130,7 @@ class QueryBuilder {
     localKey,
     column,
     callback = null,
+    expression = null,
   ) {
     const { table, alias } = this.#parseAggregateAlias(
       relatedTable,
@@ -1121,6 +1144,7 @@ class QueryBuilder {
       foreignKey,
       localKey,
       column: aggregateType === "COUNT" ? "*" : column,
+      expression,
       alias,
       callback,
     });
@@ -1177,7 +1201,9 @@ class QueryBuilder {
     const aggFunc =
       aggregate.type === "COUNT"
         ? "COUNT(*)"
-        : `${aggregate.type}(${aggregate.column})`;
+        : aggregate.type === "CUSTOM"
+          ? aggregate.expression
+          : `${aggregate.type}(${aggregate.column})`;
     subQuery.#query.select = aggFunc;
     subQuery.#query.type = "SELECT";
 
@@ -1457,6 +1483,42 @@ class QueryBuilder {
     );
   }
 
+  /**
+   * Add custom aggregate expression for related table.
+   * Useful for calculations like SUM(total) / COUNT(total).
+   *
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table
+   * @param {string|string[]} localKey - Local key(s) in current table
+   * @param {string} expression - Custom SQL aggregate expression (trusted code only)
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   *
+   * @example
+   * const users = await query('users')
+   *   .withCustom({'transactions': 'avg_ticket'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+   *   .get();
+   */
+  withCustom(
+    relatedTable,
+    foreignKey,
+    localKey,
+    expression,
+    callback = null,
+  ) {
+    this.#validateAggregateExpression(expression);
+
+    return this.#registerAggregate(
+      "CUSTOM",
+      relatedTable,
+      foreignKey,
+      localKey,
+      null,
+      callback,
+      expression,
+    );
+  }
+
   // ---------------------------------------------------------------------------
   // JOIN-based aggregates  (single derived-table pass — efficient for large datasets)
   // Use joinSum / joinCount / joinAvg / joinMax / joinMin instead of withSum etc.
@@ -1619,6 +1681,35 @@ class QueryBuilder {
       foreignKey,
       localKey,
       column,
+      callback,
+    );
+  }
+
+  /**
+   * Add a JOIN-based custom aggregate expression.
+   *
+   * @param {string|object} relatedTable - Table name (string) or object mapping {table: alias}
+   * @param {string|string[]} foreignKey - Foreign key(s) in related table
+   * @param {string|string[]} localKey - Local key(s) in current table
+   * @param {string} expression - Custom SQL aggregate expression (trusted code only)
+   * @param {function} [callback] - Optional callback to filter related records
+   * @returns {QueryBuilder} QueryBuilder instance for chaining
+   */
+  joinCustom(
+    relatedTable,
+    foreignKey,
+    localKey,
+    expression,
+    callback = null,
+  ) {
+    this.#validateAggregateExpression(expression);
+
+    return this.#registerJoinAggregate(
+      "CUSTOM",
+      relatedTable,
+      foreignKey,
+      localKey,
+      expression,
       callback,
     );
   }
@@ -2250,7 +2341,11 @@ class QueryBuilder {
 
             // Build aggregate function
             const aggFunc =
-              agg.type === "COUNT" ? "COUNT(*)" : `${agg.type}(${agg.column})`;
+              agg.type === "COUNT"
+                ? "COUNT(*)"
+                : agg.type === "CUSTOM"
+                  ? agg.expression
+                  : `${agg.type}(${agg.column})`;
             subQuery.#query.select = aggFunc;
             subQuery.#query.type = "SELECT";
 
@@ -2306,7 +2401,11 @@ class QueryBuilder {
           subQ.from(jagg.relatedTable);
           subQ.#query.type = "SELECT";
           const aggFunc =
-            jagg.type === "COUNT" ? "COUNT(*)" : `${jagg.type}(${jagg.column})`;
+            jagg.type === "COUNT"
+              ? "COUNT(*)"
+              : jagg.type === "CUSTOM"
+                ? jagg.column
+                : `${jagg.type}(${jagg.column})`;
           const derivedCols = [...foreignKeys, `${aggFunc} as ${jagg.alias}`];
           subQ.#query.select = derivedCols.join(", ");
           subQ.#query.groupBy = [...foreignKeys];

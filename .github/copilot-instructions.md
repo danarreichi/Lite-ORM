@@ -399,6 +399,17 @@ const usersWithStats = await query('users')
   .withMin('transactions', 'user_id', 'id', 'amount')      // users[0].transactions_amount_min
   .get();
 
+// withCustom - Custom aggregate formula (trusted SQL expression)
+const usersWithCustomFormula = await query('users')
+  .withCustom(
+    {'transactions': 'avg_ticket'},
+    'user_id',
+    'id',
+    'SUM(total_amount) / COUNT(total_amount)'
+  )
+  .where('avg_ticket', '>', 100)
+  .get();
+
 // JOIN-based aggregates (better for larger datasets)
 // joinSum, joinCount, joinAvg, joinMax, joinMin use derived-table LEFT JOIN strategy
 const usersWithJoinAgg = await query('users')
@@ -407,6 +418,17 @@ const usersWithJoinAgg = await query('users')
   })
   .joinCount({'transactions': 'total_count'}, 'user_id', 'id')
   .where('total_spent', '>', 10000)   // aggregate alias auto-detected
+  .get();
+
+// joinCustom - JOIN-based custom aggregate formula
+const usersWithJoinCustom = await query('users')
+  .joinCustom(
+    {'transactions': 'avg_ticket_join'},
+    'user_id',
+    'id',
+    'SUM(total_amount) / COUNT(total_amount)'
+  )
+  .where('avg_ticket_join', '>', 100)
   .get();
 
 // Multiple aggregates with conditions
@@ -665,6 +687,8 @@ Available methods:
 - `withMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MAX aggregate (custom alias, supports arrays for composite keys)
 - `withMin('table', foreignKey, localKey, column, callback)` - Add MIN aggregate (auto alias: table_column_min, supports arrays for composite keys)
 - `withMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MIN aggregate (custom alias, supports arrays for composite keys)
+- `withCustom('table', foreignKey, localKey, expression, callback)` - Add custom aggregate expression (trusted SQL expression)
+- `withCustom({'table': 'alias'}, foreignKey, localKey, expression, callback)` - Add custom aggregate expression with custom alias
 - `joinSum('table', foreignKey, localKey, column, callback)` - Add JOIN-based SUM aggregate (derived table strategy)
 - `joinSum({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based SUM aggregate (custom alias)
 - `joinCount('table', foreignKey, localKey, callback)` - Add JOIN-based COUNT aggregate
@@ -675,6 +699,8 @@ Available methods:
 - `joinMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based MAX aggregate (custom alias)
 - `joinMin('table', foreignKey, localKey, column, callback)` - Add JOIN-based MIN aggregate
 - `joinMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based MIN aggregate (custom alias)
+- `joinCustom('table', foreignKey, localKey, expression, callback)` - Add JOIN-based custom aggregate expression
+- `joinCustom({'table': 'alias'}, foreignKey, localKey, expression, callback)` - Add JOIN-based custom aggregate expression with custom alias
 - `like(column, value, side)` - LIKE condition (side: 'both', 'before', 'after')
 - `orLike(column, value, side)` - OR LIKE condition
 - `search(columns, value, side)` - Search multiple columns with AND logic (side: 'both', 'before', 'after')

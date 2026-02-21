@@ -63,6 +63,21 @@ function assertGreaterThan(actual, expected, testName) {
   }
 }
 
+function assertAlmostEquals(actual, expected, epsilon, testName) {
+  totalTests++;
+  const passed = Number.isFinite(actual) && Number.isFinite(expected) && Math.abs(actual - expected) <= epsilon;
+  if (passed) {
+    passedTests++;
+    console.log(`✅ ${testName}`);
+  } else {
+    failedTests++;
+    console.error(`❌ ${testName}`);
+    console.error('  Expected approx:', expected);
+    console.error('  Actual:', actual);
+  }
+  return passed;
+}
+
 function assertContains(array, value, testName) {
   totalTests++;
   const passed = array && array.length > 0 && array.some(item => 
@@ -451,6 +466,43 @@ async function testMultipleAggregates() {
   assert(typeof users.avg_amount === 'number', 'Multiple aggregates: Has average');
 }
 
+async function testWithCustom() {
+  const user = await query('users')
+    .withCustom({'transactions': 'avg_ticket'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(user !== null, 'withCustom: Returns user');
+  assert(typeof user.avg_ticket === 'number', 'withCustom: Custom aggregate is number');
+}
+
+async function testWithCustomAliasFiltering() {
+  const users = await query('users')
+    .withCustom({'transactions': 'avg_ticket'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('avg_ticket', '>', 50)
+    .get();
+
+  assert(Array.isArray(users), 'withCustom alias filter: Returns array');
+  if (users.length > 0) {
+    assert(users.every((u) => typeof u.avg_ticket === 'number' && u.avg_ticket > 50), 'withCustom alias filter: All users match condition');
+  }
+}
+
+async function testWithCustomMatchesWithAvg() {
+  const withAvg = await query('users')
+    .withAvg({'transactions': 'avg_amount'}, 'user_id', 'id', 'total_amount')
+    .where('username', 'john_doe')
+    .first();
+
+  const withCustom = await query('users')
+    .withCustom({'transactions': 'avg_amount_custom'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(withAvg !== null && withCustom !== null, 'withCustom parity: Both queries return user');
+  assertAlmostEquals(withCustom.avg_amount_custom, withAvg.avg_amount, 0.000001, 'withCustom parity: Matches withAvg result');
+}
+
 console.log('\n⚡ JOIN-BASED AGGREGATE FUNCTIONS\n');
 
 async function testJoinSum() {
@@ -509,6 +561,31 @@ async function testJoinAggregateMatchesWithAggregate() {
   assert(withAgg !== null && joinAgg !== null, 'join aggregates parity: Both queries return user');
   assertEquals(joinAgg.total_spent, withAgg.total_spent, 'joinSum parity: Matches withSum result');
   assertEquals(joinAgg.total_count, withAgg.total_count, 'joinCount parity: Matches withCount result');
+}
+
+async function testJoinCustom() {
+  const user = await query('users')
+    .joinCustom({'transactions': 'avg_ticket_join'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(user !== null, 'joinCustom: Returns user');
+  assert(typeof user.avg_ticket_join === 'number', 'joinCustom: Custom aggregate is number');
+}
+
+async function testJoinCustomMatchesWithCustom() {
+  const withCustom = await query('users')
+    .withCustom({'transactions': 'avg_ticket_with'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('username', 'john_doe')
+    .first();
+
+  const joinCustom = await query('users')
+    .joinCustom({'transactions': 'avg_ticket_join'}, 'user_id', 'id', 'SUM(total_amount) / COUNT(total_amount)')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(withCustom !== null && joinCustom !== null, 'joinCustom parity: Both queries return user');
+  assertAlmostEquals(joinCustom.avg_ticket_join, withCustom.avg_ticket_with, 0.000001, 'joinCustom parity: Matches withCustom result');
 }
 
 console.log('\n🎯 AGGREGATE FILTERING (Auto-detect)\n');
@@ -1007,12 +1084,17 @@ async function runAllTests() {
     await testWithMax();
     await testWithMin();
     await testMultipleAggregates();
+    await testWithCustom();
+    await testWithCustomAliasFiltering();
+    await testWithCustomMatchesWithAvg();
 
     // JOIN-based aggregates
     await testJoinSum();
     await testJoinCountAvgMaxMin();
     await testJoinAggregateCustomAliasAndFilter();
     await testJoinAggregateMatchesWithAggregate();
+    await testJoinCustom();
+    await testJoinCustomMatchesWithCustom();
     
     // Aggregate filtering
     await testFilterByAggregateAlias();
