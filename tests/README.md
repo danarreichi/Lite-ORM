@@ -74,9 +74,19 @@ The test suite validates:
 - `withAvg()` - Average of related column
 - `withMax()` - Maximum value
 - `withMin()` - Minimum value
+- `joinSum()` - JOIN-based sum aggregate
+- `joinCount()` - JOIN-based count aggregate
+- `joinAvg()` - JOIN-based average aggregate
+- `joinMax()` - JOIN-based maximum aggregate
+- `joinMin()` - JOIN-based minimum aggregate
 - Custom aliases
 - Multiple aggregates on same query
 - Composite key aggregates
+
+### ✅ JOIN Aggregate Behavior
+- Parity checks between `with*` and `join*` aggregate results
+- Alias filtering support with `where('aggregate_alias', ... )`
+- Callback filtering support in JOIN aggregate subqueries
 
 ### ✅ Aggregate Filtering
 - Auto-detection of aggregate aliases in WHERE

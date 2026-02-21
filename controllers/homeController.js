@@ -26,66 +26,66 @@ const homeController = {
 
     var testChunk = [];
     await query('users')
-        .withMany('transactions', 'user_id', 'id', function(q) {
-          q.orderBy('id', 'desc');
-        })
-        .withOne({'transactions' : 'transaction_one'}, 'user_id', 'id', function(q) {
-          q.orderBy('id', 'desc');
-        })
-        .chunk(2, async (users, page) => {
-          users.forEach(function(user) {
-            testChunk.push(user);
-          });
+      .withMany('transactions', 'user_id', 'id', function (q) {
+        q.orderBy('id', 'desc');
+      })
+      .withOne({ 'transactions': 'transaction_one' }, 'user_id', 'id', function (q) {
+        q.orderBy('id', 'desc');
+      })
+      .chunk(2, async (users, page) => {
+        users.forEach(function (user) {
+          testChunk.push(user);
         });
-    
+      });
+
     // Example 1: Load users with their reviews (using composite keys)
     // Reviews table has both user_id and product_id foreign keys
     const example1 = await query('users')
       .select(['username', 'email'])
-      .withMany({'reviews': 'userReviews'}, 'user_id', 'id', function(q) {
+      .withMany({ 'reviews': 'userReviews' }, 'user_id', 'id', function (q) {
         q.select(['title', 'content']);
-        q.withOne('products', 'id', 'product_id', function(q) {
+        q.withOne('products', 'id', 'product_id', function (q) {
           q.select('name');
         }); // Nested relation
       })
       .get();
-    
+
     // Example 2: Load products with their reviews and the reviewer info
     // Shows composite relationship: each review belongs to both a user AND a product
     const example2 = await query('products')
       .select(['id', 'name', 'price'])
-      .withMany('reviews', 'product_id', 'id', function(q) {
+      .withMany('reviews', 'product_id', 'id', function (q) {
         q.withOne('users', 'id', 'user_id'); // Get the user who wrote the review
       })
       .withAvg('reviews', 'product_id', 'id', 'rating') // Average rating
       .where('reviews_rating_avg', '>=', 4.0)
       .limit(3)
       .get();
-    
+
     // Example 3: REAL Composite Key Example
     // user_product_favorites has composite PRIMARY KEY (user_id, product_id)
     // This demonstrates loading relations where the related table uses composite keys
     const example3 = await query('users')
       .select(['id', 'username', 'email'])
       .withMany(
-        {'user_product_favorites': 'favorites'}, 
+        { 'user_product_favorites': 'favorites' },
         'user_id',  // Foreign key in favorites table
         'id'        // Local key in users table
       )
       .get();
-    
+
     // Example 3b: Get products with their favorited-by users
     const example3b = await query('products')
       .select(['id', 'name', 'price'])
-      .withMany('user_product_favorites', 'product_id', 'id', function(q) {
+      .withMany('user_product_favorites', 'product_id', 'id', function (q) {
         q.withOne('users', 'id', 'user_id'); // Get the user who favorited
       })
       .get();
-    
+
     // =============================================
     // MULTIPLE FOREIGN KEYS EXAMPLES (Array Syntax)
     // =============================================
-    
+
     // Example 4: Orders with Items (MULTIPLE FOREIGN KEY MATCHING)
     // order_items table requires matching on BOTH order_id AND store_id
     // This is common in sharded databases or multi-tenant systems
@@ -97,62 +97,62 @@ const homeController = {
         ['id', 'store_id']            // Multiple local keys in orders
       )
       .get();
-    
+
     // Example 4b: Orders with Items AND Product Details (nested with composite keys)
     const example4b = await query('orders')
       .select(['orders.id', 'orders.order_number', 'stores.name as store_name', 'orders.total_amount'])
       .join('stores', 'orders.store_id = stores.id')
       .withMany(
-        {'order_items': 'items'},
+        { 'order_items': 'items' },
         ['order_id', 'store_id'],    // Multiple foreign keys
         ['id', 'store_id'],           // Multiple local keys
-        function(q) {
+        function (q) {
           q.withOne('products', 'id', 'product_id'); // Get product details for each item
         }
       )
       .withOne('users', 'id', 'user_id')
       .where('orders.status', 'delivered')
       .get();
-    
+
     // Example 4c: Stores with their Orders and Order Items
     const example4c = await query('stores')
       .select(['id', 'name', 'location'])
-      .withMany('orders', 'store_id', 'id', function(q) {
+      .withMany('orders', 'store_id', 'id', function (q) {
         q.withMany(
           'order_items',
           ['order_id', 'store_id'],
           ['id', 'store_id'],
-          function(itemQ) {
+          function (itemQ) {
             itemQ.withOne('products', 'id', 'product_id');
           }
         );
         q.withOne('users', 'id', 'user_id');
       })
       .get();
-    
+
     // =============================================
     // AGGREGATE FUNCTIONS WITH MULTIPLE FOREIGN KEYS
     // =============================================
-    
+
     // Example 8: Orders with aggregate on order_items (composite FK)
     // Count items and sum totals matching on BOTH order_id AND store_id
     const example8 = await query('orders')
       .select(['id', 'order_number', 'store_id', 'total_amount'])
       .withMany(
-        {'order_items': 'items'},
+        { 'order_items': 'items' },
         ['order_id', 'store_id'],    // Multiple foreign keys
         ['id', 'store_id'],           // Multiple local keys
-        function(q) {
+        function (q) {
           q.withOne('products', 'id', 'product_id'); // Get product details for each item
         }
       )
       .withCount(
-        {'order_items': 'total_items'},
+        { 'order_items': 'total_items' },
         ['order_id', 'store_id'],    // Multiple foreign keys
         ['id', 'store_id']            // Multiple local keys
       )
       .withSum(
-        {'order_items': 'items_sum'},
+        { 'order_items': 'items_sum' },
         ['order_id', 'store_id'],
         ['id', 'store_id'],
         'total_price'
@@ -165,47 +165,47 @@ const homeController = {
       )
       .where('status', 'delivered')
       .get();
-    
+
     // Example 9: Filter orders by aggregate values (composite FK)
     // Find orders with more than 2 items
     const example9 = await query('orders')
       .select(['id', 'order_number', 'total_amount'])
       .withCount(
-        {'order_items': 'item_count'},
+        { 'order_items': 'item_count' },
         ['order_id', 'store_id'],
         ['id', 'store_id']
       )
       .where('item_count', '>=', 2)    // Auto-detects aggregate alias!
       .get();
-    
+
     // Example 10: Multiple aggregates with composite keys and filtering
     const example10 = await query('orders')
       .select(['orders.id', 'orders.order_number', 'stores.name as store_name'])
       .join('stores', 'orders.store_id = stores.id')
       .withCount(
-        {'order_items': 'total_items'},
+        { 'order_items': 'total_items' },
         ['order_id', 'store_id'],
         ['id', 'store_id']
       )
       .withSum(
-        {'order_items': 'total_value'},
+        { 'order_items': 'total_value' },
         ['order_id', 'store_id'],
         ['id', 'store_id'],
         'total_price',
-        function(q) {
+        function (q) {
           q.where('quantity', '>', 1);  // Only items with quantity > 1
         }
       )
       .where('total_items', '>=', 2)
       .where('total_value', '>', 100)
       .get();
-    
+
     // Example 5: Complex query with transaction_details
     // Shows relationship between transactions and products through transaction_details
     const example5 = await query('transactions')
       .select(['id', 'transaction_number', 'total_amount', 'status'])
-      .withMany('transaction_details', 'transaction_id', 'id', function(q) {
-        q.withOne('products', 'id', 'product_id', function(pq) {
+      .withMany('transaction_details', 'transaction_id', 'id', function (q) {
+        q.withOne('products', 'id', 'product_id', function (pq) {
           pq.withOne('categories', 'id', 'category_id');
         });
       })
@@ -214,29 +214,62 @@ const homeController = {
       .orderBy('transaction_date', 'DESC')
       .limit(2)
       .get();
-    
+
     // Example 6: Find users who reviewed specific products with composite filtering
     const example6 = await query('users')
-      .whereHas('reviews', 'user_id', 'id', function(q) {
+      .whereHas('reviews', 'user_id', 'id', function (q) {
         q.where('product_id', 1); // Wireless Headphones
         q.where('rating', '>=', 4);
       })
       .withMany('reviews', 'user_id', 'id')
       .get();
-    
+
     // Example 7: Get all reviews with full user and product details
     const example7 = await query('reviews')
-      .withOne({'users': 'reviewer'}, 'id', 'user_id')
-      .withOne({'products': 'reviewedProduct'}, 'id', 'product_id', function(q) {
+      .withOne({ 'users': 'reviewer' }, 'id', 'user_id')
+      .withOne({ 'products': 'reviewedProduct' }, 'id', 'product_id', function (q) {
         q.withOne('categories', 'id', 'category_id');
       })
       .where('rating', '>=', 4)
       .orderBy('created_at', 'DESC')
       .limit(3)
       .get();
-    
+
+    const joinSum = await query('orders')
+      .select([
+        'orders.id',
+        // 'orders.order_number', 
+        // 'stores.name as store_name'
+      ])
+      .leftJoin('stores', 'orders.store_id = stores.id')
+      .joinCount(
+        { 'order_items': 'total_items' },
+        ['order_id', 'store_id'],
+        ['id', 'store_id']
+      )
+      .withMany(
+        'order_items',
+        ['order_id', 'store_id'],
+        ['id', 'store_id'],
+        function (q) {
+          q.select([
+            'item_name',
+            'quantity',
+            'total_price'
+          ]);
+        }
+      )
+      .joinSum(
+        { 'order_items': 'total_value' },
+        ['order_id', 'store_id'],
+        ['id', 'store_id'],
+        'total_price'
+      )
+      .get();
+
     // Return all examples
     dd(res, {
+      'Join Sum Test': joinSum,
       '--- COMPOSITE PRIMARY KEY ---': null,
       'Example 1 - Users with Reviews': example1,
       'Example 2 - Products with Reviews (Avg Rating >= 4)': example2,

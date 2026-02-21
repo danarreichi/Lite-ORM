@@ -76,6 +76,7 @@ class QueryBuilder {
       upsertUpdate: null,
       with: [],
       aggregates: [],
+      joinAggregates: [], // JOIN-based aggregates (derived table strategy, efficient for large datasets)
       autoAddedColumns: [], // Track columns auto-added for relationships
     };
     this.#parameters = [];
@@ -171,6 +172,22 @@ class QueryBuilder {
    * @param {'AND'|'OR'} logicType - Condition logic type
    */
   #addWhereCondition(column, operator, value, logicType) {
+    // Check joinAggregates first (JOIN-based derived table strategy)
+    const jaggIdx = this.#query.joinAggregates.findIndex(
+      (jagg) => jagg.alias === column,
+    );
+    if (jaggIdx !== -1) {
+      const jagg = this.#query.joinAggregates[jaggIdx];
+      // Reference the derived table alias column directly — no subquery needed
+      this.#query.where.push({
+        column: `__jagg_${jaggIdx}.${jagg.alias}`,
+        operator,
+        value,
+        type: logicType,
+      });
+      return;
+    }
+
     const aggregate = this.#query.aggregates.find(
       (agg) => agg.alias === column,
     );
@@ -1440,6 +1457,172 @@ class QueryBuilder {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // JOIN-based aggregates  (single derived-table pass — efficient for large datasets)
+  // Use joinSum / joinCount / joinAvg / joinMax / joinMin instead of withSum etc.
+  // when operating on tables with thousands of rows.
+  //
+  // Generated SQL pattern:
+  //   LEFT JOIN (SELECT fk, AGG(col) as alias FROM related [WHERE] GROUP BY fk)
+  //             __jagg_N ON __jagg_N.fk = main.lk
+  //   SELECT COALESCE(__jagg_N.alias, 0) as alias
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Register a JOIN-based aggregate definition
+   * @private
+   */
+  #registerJoinAggregate(
+    aggregateType,
+    relatedTable,
+    foreignKey,
+    localKey,
+    column,
+    callback = null,
+  ) {
+    const { table, alias } = this.#parseAggregateAlias(
+      relatedTable,
+      column,
+      aggregateType,
+    );
+
+    this.#query.joinAggregates.push({
+      type: aggregateType,
+      relatedTable: table,
+      foreignKey,
+      localKey,
+      column: aggregateType === "COUNT" ? "*" : column,
+      alias,
+      callback,
+    });
+
+    return this;
+  }
+
+  /**
+   * Add a JOIN-based SUM aggregate (efficient for large datasets).
+   * Runs one GROUP BY subquery and LEFT JOINs the result instead of a
+   * correlated subquery per row.
+   *
+   * Same signature as withSum().
+   *
+   * @example
+   * const users = await query('users')
+   *   .joinSum('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_sum = 15000
+   *
+   * @example
+   * // Custom alias + filter callback
+   * const users = await query('users')
+   *   .joinSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+   *     q.where('status', 'completed');
+   *   })
+   *   .get();
+   * // users[0].total_spent = 15000
+   *
+   * @example
+   * // Filter by aggregate value — auto-detected, uses WHERE not HAVING
+   * const users = await query('users')
+   *   .joinSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount')
+   *   .where('total_spent', '>', 10000)
+   *   .get();
+   */
+  joinSum(relatedTable, foreignKey, localKey, column, callback = null) {
+    return this.#registerJoinAggregate(
+      "SUM",
+      relatedTable,
+      foreignKey,
+      localKey,
+      column,
+      callback,
+    );
+  }
+
+  /**
+   * Add a JOIN-based COUNT aggregate (efficient for large datasets).
+   * Same signature as withCount().
+   *
+   * @example
+   * const users = await query('users')
+   *   .joinCount('transactions', 'user_id', 'id')
+   *   .get();
+   * // users[0].transactions_count = 5
+   */
+  joinCount(relatedTable, foreignKey, localKey, callback = null) {
+    return this.#registerJoinAggregate(
+      "COUNT",
+      relatedTable,
+      foreignKey,
+      localKey,
+      null,
+      callback,
+    );
+  }
+
+  /**
+   * Add a JOIN-based AVG aggregate (efficient for large datasets).
+   * Same signature as withAvg().
+   *
+   * @example
+   * const users = await query('users')
+   *   .joinAvg('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_avg = 3000
+   */
+  joinAvg(relatedTable, foreignKey, localKey, column, callback = null) {
+    return this.#registerJoinAggregate(
+      "AVG",
+      relatedTable,
+      foreignKey,
+      localKey,
+      column,
+      callback,
+    );
+  }
+
+  /**
+   * Add a JOIN-based MAX aggregate (efficient for large datasets).
+   * Same signature as withMax().
+   *
+   * @example
+   * const users = await query('users')
+   *   .joinMax('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_max = 10000
+   */
+  joinMax(relatedTable, foreignKey, localKey, column, callback = null) {
+    return this.#registerJoinAggregate(
+      "MAX",
+      relatedTable,
+      foreignKey,
+      localKey,
+      column,
+      callback,
+    );
+  }
+
+  /**
+   * Add a JOIN-based MIN aggregate (efficient for large datasets).
+   * Same signature as withMin().
+   *
+   * @example
+   * const users = await query('users')
+   *   .joinMin('transactions', 'user_id', 'id', 'amount')
+   *   .get();
+   * // users[0].transactions_amount_min = 100
+   */
+  joinMin(relatedTable, foreignKey, localKey, column, callback = null) {
+    return this.#registerJoinAggregate(
+      "MIN",
+      relatedTable,
+      foreignKey,
+      localKey,
+      column,
+      callback,
+    );
+  }
+
   /**
    * Escape special LIKE characters
    * @private
@@ -2083,11 +2266,69 @@ class QueryBuilder {
               : `${selectClause}, ${aggregateSelects.join(", ")}`;
         }
 
+        // Add JOIN-based aggregate selects (COALESCE to return 0 instead of NULL when no match)
+        if (this.#query.joinAggregates.length > 0) {
+          const jaggSelects = this.#query.joinAggregates.map(
+            (jagg, idx) =>
+              `COALESCE(__jagg_${idx}.${jagg.alias}, 0) as ${jagg.alias}`,
+          );
+          selectClause =
+            selectClause === "*"
+              ? `${this.#query.table}.*, ${jaggSelects.join(", ")}`
+              : `${selectClause}, ${jaggSelects.join(", ")}`;
+        }
+
         sql = `SELECT ${this.#query.distinct ? "DISTINCT " : ""}${selectClause} FROM ${this.#query.table}`;
 
         // JOINs
         this.#query.joins.forEach((join) => {
           sql += ` ${join.type} JOIN ${join.table} ON ${join.condition}`;
+        });
+
+        // JOIN-based aggregate derived-table LEFT JOINs
+        this.#query.joinAggregates.forEach((jagg, idx) => {
+          const jaggAlias = `__jagg_${idx}`;
+          const foreignKeys = Array.isArray(jagg.foreignKey)
+            ? jagg.foreignKey
+            : [jagg.foreignKey];
+          const localKeys = Array.isArray(jagg.localKey)
+            ? jagg.localKey
+            : [jagg.localKey];
+
+          if (foreignKeys.length !== localKeys.length) {
+            throw new Error(
+              "Foreign keys and local keys must have the same length for composite keys",
+            );
+          }
+
+          // Build derived-table subquery: SELECT fk(s), AGG(col) as alias FROM related [WHERE] GROUP BY fk(s)
+          const subQ = new QueryBuilder(this.#executor);
+          subQ.from(jagg.relatedTable);
+          subQ.#query.type = "SELECT";
+          const aggFunc =
+            jagg.type === "COUNT" ? "COUNT(*)" : `${jagg.type}(${jagg.column})`;
+          const derivedCols = [...foreignKeys, `${aggFunc} as ${jagg.alias}`];
+          subQ.#query.select = derivedCols.join(", ");
+          subQ.#query.groupBy = [...foreignKeys];
+
+          // Apply callback filters inside the derived table
+          if (jagg.callback && typeof jagg.callback === "function") {
+            jagg.callback(subQ);
+          }
+
+          const subSql = subQ.buildSql();
+          // Derived-table params must be positioned before WHERE params
+          this.#parameters.push(...subQ.#parameters);
+
+          // Build ON conditions
+          const onCondition = foreignKeys
+            .map(
+              (fk, i) =>
+                `${jaggAlias}.${fk} = ${this.#query.table}.${localKeys[i]}`,
+            )
+            .join(" AND ");
+
+          sql += ` LEFT JOIN (${subSql}) ${jaggAlias} ON ${onCondition}`;
         });
 
         // WHERE
@@ -2200,6 +2441,19 @@ class QueryBuilder {
         this.#query.aggregates.forEach((agg) => {
           if (newRow[agg.alias] !== null && newRow[agg.alias] !== undefined) {
             newRow[agg.alias] = Number(newRow[agg.alias]) || 0;
+          }
+        });
+        return newRow;
+      });
+    }
+
+    // Convert JOIN-based aggregate results to numbers
+    if (this.#query.joinAggregates.length > 0 && rows.length > 0) {
+      rows = rows.map((row) => {
+        const newRow = { ...row };
+        this.#query.joinAggregates.forEach((jagg) => {
+          if (newRow[jagg.alias] !== null && newRow[jagg.alias] !== undefined) {
+            newRow[jagg.alias] = Number(newRow[jagg.alias]) || 0;
           }
         });
         return newRow;

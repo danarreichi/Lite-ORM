@@ -451,6 +451,66 @@ async function testMultipleAggregates() {
   assert(typeof users.avg_amount === 'number', 'Multiple aggregates: Has average');
 }
 
+console.log('\n⚡ JOIN-BASED AGGREGATE FUNCTIONS\n');
+
+async function testJoinSum() {
+  const user = await query('users')
+    .joinSum('transactions', 'user_id', 'id', 'total_amount')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(user !== null, 'joinSum: Returns user');
+  assert(typeof user.transactions_total_amount_sum === 'number', 'joinSum: Auto alias is number');
+}
+
+async function testJoinCountAvgMaxMin() {
+  const user = await query('users')
+    .joinCount('transactions', 'user_id', 'id')
+    .joinAvg('transactions', 'user_id', 'id', 'total_amount')
+    .joinMax('transactions', 'user_id', 'id', 'total_amount')
+    .joinMin('transactions', 'user_id', 'id', 'total_amount')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(user !== null, 'joinCount/joinAvg/joinMax/joinMin: Returns user');
+  assert(typeof user.transactions_count === 'number', 'joinCount: Count is number');
+  assert(typeof user.transactions_total_amount_avg === 'number', 'joinAvg: Avg is number');
+  assert(typeof user.transactions_total_amount_max === 'number', 'joinMax: Max is number');
+  assert(typeof user.transactions_total_amount_min === 'number', 'joinMin: Min is number');
+}
+
+async function testJoinAggregateCustomAliasAndFilter() {
+  const users = await query('users')
+    .joinSum({'transactions': 'completed_spent'}, 'user_id', 'id', 'total_amount', function(q) {
+      q.where('status', 'completed');
+    })
+    .where('completed_spent', '>', 100)
+    .get();
+
+  assert(Array.isArray(users), 'join aggregate alias filter: Returns array');
+  if (users.length > 0) {
+    assert(users.every(u => typeof u.completed_spent === 'number' && u.completed_spent > 100), 'join aggregate alias filter: All users match condition');
+  }
+}
+
+async function testJoinAggregateMatchesWithAggregate() {
+  const withAgg = await query('users')
+    .withSum({'transactions': 'total_spent'}, 'user_id', 'id', 'total_amount')
+    .withCount({'transactions': 'total_count'}, 'user_id', 'id')
+    .where('username', 'john_doe')
+    .first();
+
+  const joinAgg = await query('users')
+    .joinSum({'transactions': 'total_spent'}, 'user_id', 'id', 'total_amount')
+    .joinCount({'transactions': 'total_count'}, 'user_id', 'id')
+    .where('username', 'john_doe')
+    .first();
+
+  assert(withAgg !== null && joinAgg !== null, 'join aggregates parity: Both queries return user');
+  assertEquals(joinAgg.total_spent, withAgg.total_spent, 'joinSum parity: Matches withSum result');
+  assertEquals(joinAgg.total_count, withAgg.total_count, 'joinCount parity: Matches withCount result');
+}
+
 console.log('\n🎯 AGGREGATE FILTERING (Auto-detect)\n');
 
 async function testFilterByAggregateAlias() {
@@ -947,6 +1007,12 @@ async function runAllTests() {
     await testWithMax();
     await testWithMin();
     await testMultipleAggregates();
+
+    // JOIN-based aggregates
+    await testJoinSum();
+    await testJoinCountAvgMaxMin();
+    await testJoinAggregateCustomAliasAndFilter();
+    await testJoinAggregateMatchesWithAggregate();
     
     // Aggregate filtering
     await testFilterByAggregateAlias();

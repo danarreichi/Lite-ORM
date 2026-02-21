@@ -7,7 +7,7 @@ A Node.js HTTP server project with Express and EJS dependencies installed. Curre
 - `npm start` - Runs `node index.js` to start the HTTP server on port 3000
 - `npm run dev` - Runs with nodemon for automatic restarts on code changes
 - `npm run seed` - Runs the database seeder to create tables and sample data
-- `npm test` - Currently returns error (no tests configured)
+- `npm test` - Runs `node tests/runAll.js` to execute the QueryBuilder test suites
 - Port 3000 is the default; modify in code if conflicts occur
 
 ## Architecture & Structure
@@ -399,6 +399,16 @@ const usersWithStats = await query('users')
   .withMin('transactions', 'user_id', 'id', 'amount')      // users[0].transactions_amount_min
   .get();
 
+// JOIN-based aggregates (better for larger datasets)
+// joinSum, joinCount, joinAvg, joinMax, joinMin use derived-table LEFT JOIN strategy
+const usersWithJoinAgg = await query('users')
+  .joinSum({'transactions': 'total_spent'}, 'user_id', 'id', 'amount', function(q) {
+    q.where('status', 'completed');
+  })
+  .joinCount({'transactions': 'total_count'}, 'user_id', 'id')
+  .where('total_spent', '>', 10000)   // aggregate alias auto-detected
+  .get();
+
 // Multiple aggregates with conditions
 const userStats = await query('users')
   .withCount({'transactions': 'total_transactions'}, 'user_id', 'id')
@@ -655,6 +665,16 @@ Available methods:
 - `withMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MAX aggregate (custom alias, supports arrays for composite keys)
 - `withMin('table', foreignKey, localKey, column, callback)` - Add MIN aggregate (auto alias: table_column_min, supports arrays for composite keys)
 - `withMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add MIN aggregate (custom alias, supports arrays for composite keys)
+- `joinSum('table', foreignKey, localKey, column, callback)` - Add JOIN-based SUM aggregate (derived table strategy)
+- `joinSum({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based SUM aggregate (custom alias)
+- `joinCount('table', foreignKey, localKey, callback)` - Add JOIN-based COUNT aggregate
+- `joinCount({'table': 'alias'}, foreignKey, localKey, callback)` - Add JOIN-based COUNT aggregate (custom alias)
+- `joinAvg('table', foreignKey, localKey, column, callback)` - Add JOIN-based AVG aggregate
+- `joinAvg({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based AVG aggregate (custom alias)
+- `joinMax('table', foreignKey, localKey, column, callback)` - Add JOIN-based MAX aggregate
+- `joinMax({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based MAX aggregate (custom alias)
+- `joinMin('table', foreignKey, localKey, column, callback)` - Add JOIN-based MIN aggregate
+- `joinMin({'table': 'alias'}, foreignKey, localKey, column, callback)` - Add JOIN-based MIN aggregate (custom alias)
 - `like(column, value, side)` - LIKE condition (side: 'both', 'before', 'after')
 - `orLike(column, value, side)` - OR LIKE condition
 - `search(columns, value, side)` - Search multiple columns with AND logic (side: 'both', 'before', 'after')
@@ -705,6 +725,12 @@ Available functions in `utils/debug.js`:
 
 ### After Making Changes
 When you make changes to the codebase, do not suggest running `npm run dev` to test the changes. The user will handle server restarts and testing as needed.
+
+### QueryBuilder Aggregate Changes
+When modifying aggregate logic in `utils/queryBuilder.js`:
+- Run targeted aggregate tests first: `node tests/queryBuilder.test.js`
+- Ensure both subquery aggregates (`with*`) and JOIN-based aggregates (`join*`) are validated
+- Verify aggregate alias filtering still works with `where('alias', operator, value)`
 
 ## File References
 - [package.json](package.json) - Dependencies and scripts
